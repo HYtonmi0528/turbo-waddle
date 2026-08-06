@@ -17,3 +17,4 @@ backups/
 !.env.example
 server-data/
 .downloads/
+query
