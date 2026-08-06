@@ -15,7 +15,7 @@ const {
 } = require('./lib/passwords');
 const { importRfqWorkbook } = require('./services/rfqImporter');
 const { exportCompletedRfq } = require('./services/rfqExporter');
-const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir } = require('./services/templateService');
+const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure } = require('./services/templateService');
 const { getToday } = require('./services/exchangeRateService');
 const { logger } = require('./lib/logger');
 
@@ -683,6 +683,7 @@ function createApp() {
     const fileName = `${id}.xlsx`;
     const storagePath = path.join(templateDir, fileName);
     fs.copyFileSync(req.file.path, storagePath);
+    const { structure, fields } = await parseTemplateStructure(storagePath);
     try { fs.unlinkSync(req.file.path); } catch (_) {}
     const timestamp = now();
     const name = String(req.body.name || path.basename(req.file.originalname, '.xlsx'));
@@ -690,9 +691,9 @@ function createApp() {
       `INSERT INTO user_templates (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, storage_path, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, req.user.id, name, req.body.type || '通用', req.body.description || null, req.file.originalname,
-       json({}), json([]), 0, storagePath, timestamp, timestamp]
+       json(structure), json(fields.map(f => ({ templateField: f, systemField: f }))), 0, storagePath, timestamp, timestamp]
     );
-    res.json({ id, name });
+    res.json({ id, name, fields, structure });
   }));
   app.post('/api/excel/generate', authenticate, asyncRoute(async (req, res) => {
     const { templateId, batches, options } = req.body || {};

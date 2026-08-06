@@ -130,4 +130,24 @@ function getFieldNames(sheet, headerRow) {
   return fields;
 }
 
-module.exports = { listTemplates, deleteTemplate, generateExcel, getTemplatesDir };
+async function parseTemplateStructure(filePath) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(filePath);
+  const sheet = workbook.getWorksheet(1);
+  if (!sheet) throw new Error('模板中没有找到工作表');
+
+  const headerRow = detectHeaderRow(sheet);
+  const fields = getFieldNames(sheet, headerRow);
+  const columns = fields.map((name, idx) => ({
+    index: idx + 1,
+    name: name || `列${idx + 1}`,
+    field: name || `col_${idx + 1}`,
+    type: 'text',
+    width: 120
+  }));
+
+  const structure = { headerRow, columns, sheetName: sheet.name };
+  return { structure, fields };
+}
+
+module.exports = { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure };
