@@ -57,12 +57,10 @@ function createWindow() {
     if (!mainWindow.isDestroyed()) mainWindow.show();
   });
   mainWindow.loadFile(path.join(__dirname, 'dist', 'renderer', 'index.html'));
-  if (!app.getVersion().includes('lan-beta')) {
-    initializeUpdateManager(mainWindow);
-    mainWindow.webContents.once('did-finish-load', () => {
-      scheduleAutomaticUpdateCheck(1000);
-    });
-  }
+  initializeUpdateManager(mainWindow);
+  mainWindow.webContents.once('did-finish-load', () => {
+    scheduleAutomaticUpdateCheck(1000);
+  });
 
   if (process.argv.includes('--dev')) {
     mainWindow.webContents.openDevTools();

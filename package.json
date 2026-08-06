@@ -1,6 +1,6 @@
 {
   "name": "latic-rfq-collaboration-test",
-  "version": "2.0.0-lan-beta.3",
+  "version": "2.0.0-lan-beta.4",
   "description": "LATIC询价协作系统局域网内测版",
   "author": "LATIC",
   "repository": {
@@ -59,7 +59,12 @@
     "asarUnpack": [
       "node_modules/better-sqlite3/**",
       "node_modules/exceljs/**"
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "HYtonmi0528",
+      "repo": "turbo-waddle"
+    }
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
