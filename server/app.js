@@ -642,55 +642,12 @@ function createApp() {
   }));
 
   const frontendDir = path.join(__dirname, '..', 'dist', 'renderer');
+  const API_INIT_JS = require('fs').readFileSync(
+    path.join(__dirname, 'api-init-compact.js'), 'utf8'
+  );
   if (fs.existsSync(frontendDir)) {
-    app.get('/api-init.js', (req, res) => {
-      res.type('js');
-      res.send(`window.electronAPI = {
-  collaboration: {
-    getState: () => fetch('/api/setup/status',{credentials:'same-origin'}).then(r=>r.json()),
-    restoreSession: () => fetch('/api/auth/me',{credentials:'same-origin'}).then(r=>r.json()).then(d=>d.user).catch(()=>null),
-    setupAdmin: p => fetch('/api/setup/admin',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(p)}).then(r=>r.json()),
-    register: p => fetch('/api/auth/register',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(p)}).then(r=>r.json()),
-    login: p => fetch('/api/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(p)}).then(r=>r.json()).then(d=>{if(p.remember)localStorage.setItem('latic_cred',JSON.stringify({un:p.username,pw:p.password,ent:p.entrance||d.user.role}));return d}),
-    logout: () => fetch('/api/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>({ok:true})),
-    getRememberedLogin: () => { try{return JSON.parse(localStorage.getItem('latic_cred'))}catch(_){return null} }, clearRememberedLogin: () => { localStorage.removeItem('latic_cred') },
-    listUsers: () => fetch('/api/users',{credentials:'same-origin'}).then(r=>r.json()),
-    updateUserStatus: (uid,s) => fetch('/api/users/'+encodeURIComponent(uid)+'/status',{method:'PATCH',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({status:s})}).then(r=>r.json()),
-    updateUserRole: (uid,rl) => fetch('/api/users/'+encodeURIComponent(uid)+'/role',{method:'PATCH',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({role:rl})}).then(r=>r.json()),
-    listRemoteTemplates: () => fetch('/api/templates',{credentials:'same-origin'}).then(r=>r.json()),
-    saveRemoteTemplate: t => fetch('/api/templates',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(t)}).then(r=>r.json()),
-    listTasks: () => fetch('/api/tasks',{credentials:'same-origin'}).then(r=>r.json()),
-    getTask: tid => fetch('/api/tasks/'+encodeURIComponent(tid),{credentials:'same-origin'}).then(r=>r.json()),
-    importTask: () => Promise.resolve({canceled:true}),
-    updateTaskItem: (tid,iid,p) => fetch('/api/tasks/'+encodeURIComponent(tid)+'/items/'+encodeURIComponent(iid),{method:'PATCH',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify(p)}).then(r=>r.json()),
-    uploadTaskAttachment: () => Promise.resolve({canceled:true}),
-    uploadTaskAttachmentPath: () => Promise.reject(Error('Web版不支持')),
-    downloadTaskSource: t => { const a=document.createElement('a'); a.href='/api/tasks/'+encodeURIComponent(t.id)+'/source'; a.download=t.sourceOriginalName||'source.xlsx'; a.click(); return Promise.resolve({success:true}); },
-    exportCompletedTask: t => { const a=document.createElement('a'); a.href='/api/tasks/'+encodeURIComponent(t.id)+'/export'; a.download='filled.xlsx'; a.click(); return Promise.resolve({success:true}); },
-    downloadTaskAttachment: (tid,iid,att) => { const a=document.createElement('a'); a.href='/api/tasks/'+encodeURIComponent(tid)+'/items/'+encodeURIComponent(iid)+'/attachments/'+encodeURIComponent(att.id); a.download=att.name||'attachment'; a.click(); return Promise.resolve({success:true}); },
-    submitTaskReview: tid => fetch('/api/tasks/'+encodeURIComponent(tid)+'/submit-review',{method:'POST',credentials:'same-origin'}).then(r=>r.json()),
-    createTaskSnapshot: tid => fetch('/api/tasks/'+encodeURIComponent(tid)+'/snapshots',{method:'POST',credentials:'same-origin'}).then(r=>r.json()),
-    listNotifications: () => fetch('/api/notifications',{credentials:'same-origin'}).then(r=>r.json()),
-    readNotification: nid => fetch('/api/notifications/'+encodeURIComponent(nid)+'/read',{method:'PATCH',credentials:'same-origin'}).then(r=>r.json()),
-    getTaskAudit: tid => fetch('/api/tasks/'+encodeURIComponent(tid)+'/audit',{credentials:'same-origin'}).then(r=>r.json()),
-    revertTaskItem: (tid,iid) => fetch('/api/tasks/'+encodeURIComponent(tid)+'/items/'+encodeURIComponent(iid)+'/revert',{method:'POST',credentials:'same-origin'}).then(r=>r.json()),
-    exportTaskCsv: tid => fetch('/api/tasks/'+encodeURIComponent(tid)+'/export/csv',{credentials:'same-origin'}).then(r=>r.blob()).then(b=>{const a=document.createElement('a'); a.href=URL.createObjectURL(b); a.download='task.csv'; a.click()}),
-    getTaskStats: () => fetch('/api/tasks/stats',{credentials:'same-origin'}).then(r=>r.json())
-  },
-  app: { getVersion: () => Promise.resolve('web'), getDesktopPath: () => Promise.resolve('') },
-  templates: { list: () => Promise.resolve([]), save: () => Promise.resolve({}), updateInfo: () => Promise.resolve({}), delete: () => Promise.resolve(true), import: () => Promise.resolve(null), export: () => Promise.resolve(false), duplicate: () => Promise.resolve({}), getStructure: () => Promise.resolve({}), updateStructure: () => Promise.resolve(true), getPreview: () => Promise.resolve(null) },
-  fieldMapping: { get: () => Promise.resolve([]), save: () => Promise.resolve(true), getSystemFields: () => Promise.resolve([]), addSystemField: () => Promise.resolve({}), deleteSystemField: () => Promise.resolve(true) },
-  excel: { generate: () => Promise.resolve({success:false,message:'Web版暂不支持Excel生成'}), preview: () => Promise.resolve({success:false}), openExisting: () => Promise.resolve({success:false,canceled:true}) },
-  exchangeRate: { getToday: () => Promise.resolve({rate:7.25,source:'默认'}) },
-  rfq: { importProject: () => Promise.resolve({canceled:true}), listProjects: () => Promise.resolve([]), getProject: () => Promise.resolve(null), deleteProject: () => Promise.resolve(true), saveQuoteSet: () => Promise.resolve({}), listQuoteSets: () => Promise.resolve([]), saveSelections: () => Promise.resolve(true), generateFilled: () => Promise.resolve({success:false}) },
-  attachments: { select: () => Promise.resolve({canceled:true}) },
-  data: { saveEntry: () => Promise.resolve({success:true}), getEntries: () => Promise.resolve([]), deleteEntry: () => Promise.resolve(true), getEntry: () => Promise.resolve(null) },
-  draft: { get: () => Promise.resolve(null), save: () => Promise.resolve({success:true}), delete: () => Promise.resolve(true) },
-  database: { listBackups: () => Promise.resolve([]), createBackup: () => Promise.resolve({}), openBackupFolder: () => Promise.resolve({success:false}), restoreBackup: () => Promise.resolve({canceled:true}), getTables: () => Promise.resolve([]), getTableData: () => Promise.resolve({columns:[],rows:[],total:0}), runQuery: () => Promise.resolve({columns:[],rows:[],total:0}) },
-  history: { list: () => Promise.resolve([]), add: () => Promise.resolve('') },
-  dialog: { openFile: () => Promise.resolve({canceled:true,filePaths:[]}), saveFile: () => Promise.resolve({canceled:true}), selectFolder: () => Promise.resolve(null), createFolder: () => Promise.resolve({success:false}) },
-  update: { getStatus: () => Promise.resolve({state:'idle'}), getInstalledReleaseNotes: () => Promise.resolve(null), acknowledgeReleaseNotes: () => Promise.resolve(false), check: () => Promise.resolve({state:'not-available'}), restartAndInstall: () => Promise.resolve(false), onStatus: () => () => {} }
-};`);
+    app.use('/api-init.js', (req, res) => {
+      res.type('js').send(API_INIT_JS);
     });
     app.use(express.static(frontendDir, { maxAge: '10s' }));
     app.get('*', (req, res) => {
