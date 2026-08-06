@@ -15,6 +15,7 @@ const {
 } = require('./lib/passwords');
 const { importRfqWorkbook } = require('./services/rfqImporter');
 const { exportCompletedRfq } = require('./services/rfqExporter');
+const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir } = require('./services/templateService');
 const { logger } = require('./lib/logger');
 
 const uuid = () => crypto.randomUUID();
@@ -634,6 +635,148 @@ function createApp() {
       [req.params.id, req.params.id]
     );
     res.json({ audit: rows });
+  }));
+
+  app.get('/api/mytemplates', authenticate, asyncRoute(async (req, res) => {
+    res.json({ templates: await listTemplates(req.user.id) });
+  }));
+  app.delete('/api/mytemplates/:id', authenticate, asyncRoute(async (req, res) => {
+    await deleteTemplate(req.user.id, req.params.id);
+    res.json({ ok: true });
+  }));
+  app.get('/api/templates/:id/structure', authenticate, asyncRoute(async (req, res) => {
+    const [[row]] = await getPool().execute('SELECT structure_json FROM user_templates WHERE id = ?', [req.params.id]);
+    res.json(row ? parseJson(row.structure_json, {}) : {});
+  }));
+  app.get('/api/templates/:id/mappings', authenticate, asyncRoute(async (req, res) => {
+    const [[row]] = await getPool().execute('SELECT mappings_json FROM user_templates WHERE id = ?', [req.params.id]);
+    res.json(row ? parseJson(row.mappings_json, []) : []);
+  }));
+  app.put('/api/templates/:id/mappings', authenticate, asyncRoute(async (req, res) => {
+    await getPool().execute('UPDATE user_templates SET mappings_json = ?, updated_at = ? WHERE id = ?',
+      [json(req.body), now(), req.params.id]);
+    res.json({ ok: true });
+  }));
+  app.put('/api/templates/:id/structure', authenticate, asyncRoute(async (req, res) => {
+    await getPool().execute('UPDATE user_templates SET structure_json = ?, updated_at = ? WHERE id = ?',
+      [json(req.body), now(), req.params.id]);
+    res.json({ ok: true });
+  }));
+  app.post('/api/templates/:id/duplicate', authenticate, asyncRoute(async (req, res) => {
+    const [[orig]] = await getPool().execute('SELECT * FROM user_templates WHERE id = ?', [req.params.id]);
+    if (!orig) return res.status(404).json({ message: '模板不存在' });
+    const newId = uuid();
+    const timestamp = now();
+    await getPool().execute(
+      `INSERT INTO user_templates (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, storage_path, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [newId, req.user.id, (orig.name || '') + ' (副本)', orig.type, orig.description, orig.original_name,
+       orig.structure_json, orig.mappings_json, 0, orig.storage_path, timestamp, timestamp]
+    );
+    res.json({ id: newId });
+  }));
+  app.post('/api/templates/import', authenticate, upload.single('file'), asyncRoute(async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: '请选择模板文件' });
+    const templateDir = getTemplatesDir();
+    const id = uuid();
+    const fileName = `${id}.xlsx`;
+    const storagePath = path.join(templateDir, fileName);
+    fs.copyFileSync(req.file.path, storagePath);
+    try { fs.unlinkSync(req.file.path); } catch (_) {}
+    const timestamp = now();
+    const name = String(req.body.name || path.basename(req.file.originalname, '.xlsx'));
+    await getPool().execute(
+      `INSERT INTO user_templates (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, storage_path, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, req.user.id, name, req.body.type || '通用', req.body.description || null, req.file.originalname,
+       json({}), json([]), 0, storagePath, timestamp, timestamp]
+    );
+    res.json({ id, name });
+  }));
+  app.post('/api/excel/generate', authenticate, asyncRoute(async (req, res) => {
+    const { templateId, batches, options } = req.body || {};
+    if (!templateId) return res.status(400).json({ message: '请先选择模板' });
+    const outputPath = await generateExcel(templateId, batches, options);
+    res.download(outputPath, `生成表格_${new Date().toISOString().slice(0,10)}.xlsx`, () => {
+      try { fs.unlinkSync(outputPath); } catch (_) {}
+    });
+  }));
+
+  app.get('/api/data/entries', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().execute(
+      'SELECT id, type, data, created_at createdAt, updated_at updatedAt FROM data_entries WHERE user_id = ? ORDER BY updated_at DESC',
+      [req.user.id]
+    );
+    res.json({ entries: rows.map(r => ({ ...r, data: parseJson(r.data, {}) })) });
+  }));
+  app.post('/api/data/entries', authenticate, asyncRoute(async (req, res) => {
+    const id = req.body.id || uuid();
+    const timestamp = now();
+    await getPool().execute(
+      `INSERT INTO data_entries (id, user_id, type, data, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE data = VALUES(data), updated_at = VALUES(updated_at)`,
+      [id, req.user.id, req.body.type, json(req.body.data), timestamp, timestamp]
+    );
+    res.json({ success: true, id });
+  }));
+  app.delete('/api/data/entries/:id', authenticate, asyncRoute(async (req, res) => {
+    await getPool().execute('DELETE FROM data_entries WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
+    res.json({ ok: true });
+  }));
+
+  app.get('/api/drafts/:templateId', authenticate, asyncRoute(async (req, res) => {
+    const [[row]] = await getPool().execute(
+      'SELECT payload, updated_at updatedAt FROM data_entry_drafts WHERE user_id = ? AND template_id = ?',
+      [req.user.id, req.params.templateId]
+    );
+    res.json(row ? { payload: parseJson(row.payload, {}), updatedAt: row.updatedAt } : null);
+  }));
+  app.put('/api/drafts/:templateId', authenticate, asyncRoute(async (req, res) => {
+    const id = `${req.user.id}:${req.params.templateId}`;
+    const timestamp = now();
+    const payload = json(req.body.payload || {});
+    await getPool().execute(
+      `INSERT INTO data_entry_drafts (id, user_id, template_id, payload, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE payload = VALUES(payload), updated_at = VALUES(updated_at)`,
+      [id, req.user.id, req.params.templateId, payload, timestamp, timestamp]
+    );
+    res.json({ success: true, updatedAt: timestamp.toISOString() });
+  }));
+  app.delete('/api/drafts/:templateId', authenticate, asyncRoute(async (req, res) => {
+    await getPool().execute('DELETE FROM data_entry_drafts WHERE user_id = ? AND template_id = ?',
+      [req.user.id, req.params.templateId]);
+    res.json({ ok: true });
+  }));
+
+  app.get('/api/fields', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().query('SELECT field_key AS `key`, label, category, data_type AS dataType FROM custom_system_fields ORDER BY label');
+    res.json({ fields: rows });
+  }));
+  app.post('/api/fields', authenticate, asyncRoute(async (req, res) => {
+    const { key, label, category, dataType } = req.body || {};
+    if (!key || !label) return res.status(400).json({ message: '字段标识和名称不能为空' });
+    await getPool().execute(
+      'INSERT INTO custom_system_fields (field_key, label, category, data_type, created_by, created_at) VALUES (?,?,?,?,?,?)',
+      [key, label, category || '自定义', dataType || 'text', req.user.id, now()]
+    );
+    res.json({ ok: true });
+  }));
+  app.delete('/api/fields/:key', authenticate, asyncRoute(async (req, res) => {
+    await getPool().execute('DELETE FROM custom_system_fields WHERE field_key = ?', [req.params.key]);
+    res.json({ ok: true });
+  }));
+
+  app.get('/api/quotes', authenticate, asyncRoute(async (req, res) => {
+    res.json({ quoteSets: [] });
+  }));
+  app.post('/api/quotes', authenticate, asyncRoute(async (req, res) => {
+    res.json({ ok: true });
+  }));
+
+  app.get('/api/exchange-rate', authenticate, asyncRoute(async (req, res) => {
+    res.json({ rate: 7.25, source: '默认' });
   }));
 
   const frontendDir = path.join(__dirname, '..', 'dist', 'renderer');
