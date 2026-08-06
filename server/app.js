@@ -339,6 +339,12 @@ function createApp() {
     })) });
   }));
 
+  app.get('/api/tasks/stats', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().query('SELECT status, COUNT(*) AS count FROM rfq_tasks GROUP BY status');
+    const [items] = await getPool().query('SELECT COUNT(*) AS totalItems, SUM(CASE WHEN fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS filledItems FROM rfq_items');
+    res.json({ byStatus: rows, totalItems: Number(items[0].totalItems || 0), filledItems: Number(items[0].filledItems || 0) });
+  }));
+
   app.get('/api/tasks/:id', authenticate, asyncRoute(async (req, res) => {
     const [[task]] = await getPool().execute(
       `SELECT id, task_no AS taskNo, title, requester, country, client_name AS clientName,
@@ -566,17 +572,6 @@ function createApp() {
     res.end('\uFEFF' + csv);
   }));
 
-  app.get('/api/tasks/stats', authenticate, asyncRoute(async (req, res) => {
-    const [rows] = await getPool().query(
-      `SELECT status, COUNT(*) AS count FROM rfq_tasks GROUP BY status`
-    );
-    const [items] = await getPool().query(
-      `SELECT COUNT(*) AS totalItems, SUM(CASE WHEN fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS filledItems
-       FROM rfq_items`
-    );
-    res.json({ byStatus: rows, totalItems: Number(items[0].totalItems || 0), filledItems: Number(items[0].filledItems || 0) });
-  }));
-
   app.post('/api/tasks/:id/submit-review', authenticate, asyncRoute(async (req, res) => {
     await getPool().execute('UPDATE rfq_tasks SET status = ?, updated_at = ? WHERE id = ?', ['review', now(), req.params.id]);
     const [reviewers] = await getPool().query("SELECT id FROM users WHERE role IN ('admin','manager') AND status = 'active'");
@@ -647,9 +642,13 @@ function createApp() {
   );
   if (fs.existsSync(frontendDir)) {
     app.use('/api-init.js', (req, res) => {
+      res.set('Cache-Control', 'no-cache');
       res.type('js').send(API_INIT_JS);
     });
-    app.use(express.static(frontendDir, { maxAge: '10s' }));
+    app.use(express.static(frontendDir, {
+      maxAge: 0,
+      setHeaders: (res) => res.set('Cache-Control', 'no-cache, no-store, must-revalidate')
+    }));
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api/')) return res.status(404).json({ message: '接口不存在' });
       res.sendFile(path.join(frontendDir, 'index.html'));
