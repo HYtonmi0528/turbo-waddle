@@ -16,6 +16,7 @@ const {
 const { importRfqWorkbook } = require('./services/rfqImporter');
 const { exportCompletedRfq } = require('./services/rfqExporter');
 const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir } = require('./services/templateService');
+const { getToday } = require('./services/exchangeRateService');
 const { logger } = require('./lib/logger');
 
 const uuid = () => crypto.randomUUID();
@@ -839,7 +840,40 @@ function createApp() {
   }));
 
   app.get('/api/exchange-rate', authenticate, asyncRoute(async (req, res) => {
-    res.json({ rate: 7.25, source: '默认' });
+    res.json(await getToday(req.query.force === '1'));
+  }));
+
+  app.get('/api/db/tables', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+    const [tables] = await getPool().query(
+      `SELECT TABLE_NAME AS name, TABLE_ROWS AS rowCount
+       FROM information_schema.TABLES
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
+       ORDER BY TABLE_NAME`
+    );
+    res.json(tables.map(t => ({ name: t.name, rowCount: Number(t.rowCount || 0) })));
+  }));
+  app.get('/api/db/table/:name', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+    const page = parseInt(req.query.page) || 0;
+    const pageSize = Math.min(parseInt(req.query.pageSize) || 100, 1000);
+    const [columns] = await getPool().query(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`,
+      [req.params.name]
+    );
+    const colNames = columns.map(c => c.COLUMN_NAME);
+    const [[{ count }]] = await getPool().query(`SELECT COUNT(*) AS count FROM \`${req.params.name}\``);
+    const offset = page * pageSize;
+    const [rows] = await getPool().query(
+      `SELECT * FROM \`${req.params.name}\` LIMIT ${pageSize} OFFSET ${offset}`
+    );
+    res.json({ columns: colNames, rows, total: Number(count) });
+  }));
+  app.post('/api/db/query', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+    const sql = (req.body.query || '').trim();
+    if (!/^\s*SELECT/i.test(sql)) return res.status(400).json({ message: '仅支持 SELECT 查询' });
+    const [rows] = await getPool().query(sql);
+    const columns = rows.length ? Object.keys(rows[0]) : [];
+    res.json({ columns, rows, total: rows.length });
   }));
 
   const frontendDir = path.join(__dirname, '..', 'dist', 'renderer');
