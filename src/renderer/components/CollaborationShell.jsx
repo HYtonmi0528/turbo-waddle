@@ -371,14 +371,14 @@ export default function CollaborationShell() {
         <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>我的账号模板</button>
         <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>Excel工具</button>
         {user.role === 'admin' && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>账号管理</button>}
-        {user.role === 'admin' && <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>数据库</button>}
+        <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>数据库</button>
       </nav>
       <main className={`collab-shell-main ${activeArea === 'legacy' ? 'legacy-mode' : ''}`}>
         {activeArea === 'tasks' && <CollaborationWorkspace user={user} onNotificationsChanged={loadNotifications} onOpenExcelTool={() => setActiveArea('legacy')} />}
         {activeArea === 'templates' && <RemoteTemplates user={user} />}
         {activeArea === 'legacy' && <App />}
         {activeArea === 'users' && user.role === 'admin' && <AccountAdmin />}
-        {activeArea === 'database' && user.role === 'admin' && <DatabaseBrowser />}
+        {activeArea === 'database' && <DatabaseBrowser />}
         {activeArea === 'notifications' && (
           <section className="card collab-notification-panel">
             <div className="card-header"><h2 className="card-title">通知中心</h2><button className="btn btn-outline btn-sm" onClick={loadNotifications}>刷新</button></div>
