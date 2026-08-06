@@ -513,14 +513,78 @@ function createApp() {
     res.download(attachment.storagePath, attachment.name);
   }));
 
+  app.post('/api/tasks/:taskId/items/:itemId/revert', authenticate, asyncRoute(async (req, res) => {
+    const [[current]] = await getPool().execute(
+      'SELECT * FROM rfq_items WHERE id = ? AND task_id = ?',
+      [req.params.itemId, req.params.taskId]
+    );
+    if (!current) return res.status(404).json({ message: '产品明细不存在' });
+
+    const [logs] = await getPool().execute(
+      `SELECT before_json, after_json FROM audit_logs
+       WHERE entity_type = 'rfq_item' AND entity_id = ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [current.id]
+    );
+    if (logs.length === 0) return res.status(404).json({ message: '没有可还原的历史记录' });
+    const before = parseJson(logs[0].before_json, {});
+    await getPool().execute(
+      `UPDATE rfq_items SET fob_usd = ?, total_usd = ?, total_rmb = ?, selected_supplier = ?,
+       remarks = ?, row_version = row_version + 1, updated_by = ?, updated_at = ?
+       WHERE id = ?`,
+      [before.fobUsd || null, before.totalUsd || null, before.totalRmb || null,
+        before.selectedSupplier || null, before.remarks || null,
+        req.user.id, now(), current.id]
+    );
+    await getPool().execute(
+      `INSERT INTO audit_logs (entity_type, entity_id, action, before_json, after_json, user_id, created_at)
+       VALUES ('rfq_item', ?, 'revert', ?, ?, ?, ?)`,
+      [current.id, json({ fobUsd: current.fob_usd, totalRmb: current.total_rmb }),
+        json({ fobUsd: before.fobUsd, totalRmb: before.totalRmb }), req.user.id, now()]
+    );
+    logger.info(`数据还原: item=${req.params.itemId} task=${req.params.taskId} by ${req.user.displayName}`);
+    res.json({ ok: true, rowVersion: current.row_version + 1 });
+  }));
+
+  app.get('/api/tasks/:id/export/csv', authenticate, asyncRoute(async (req, res) => {
+    const [[task]] = await getPool().execute(
+      'SELECT title, task_no FROM rfq_tasks WHERE id = ?', [req.params.id]
+    );
+    if (!task) return res.status(404).json({ message: '任务不存在' });
+    const [items] = await getPool().execute(
+      `SELECT line_no, description, quantity, unit, product_code, fob_usd, total_rmb,
+              selected_supplier, remarks FROM rfq_items WHERE task_id = ? ORDER BY line_no`,
+      [req.params.id]
+    );
+    const headers = ['行号','描述','数量','单位','产品代码','FOB USD','含税运RMB','供应商','备注'];
+    const csv = [headers.join(','), ...items.map(i => headers.map(h => {
+      const val = i[h === '行号' ? 'line_no' : h === '描述' ? 'description' : h === '数量' ? 'quantity' : h === '单位' ? 'unit' : h === '产品代码' ? 'product_code' : h === 'FOB USD' ? 'fob_usd' : h === '含税运RMB' ? 'total_rmb' : h === '供应商' ? 'selected_supplier' : 'remarks'];
+      return val == null ? '' : `"${String(val).replace(/"/g, '""')}"`;
+    }).join(',')))].join('\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(task.task_no || task.title)}.csv"`);
+    res.end('\uFEFF' + csv);
+  }));
+
+  app.get('/api/tasks/stats', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().query(
+      `SELECT status, COUNT(*) AS count FROM rfq_tasks GROUP BY status`
+    );
+    const [items] = await getPool().query(
+      `SELECT COUNT(*) AS totalItems, SUM(CASE WHEN fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS filledItems
+       FROM rfq_items`
+    );
+    res.json({ byStatus: rows, totalItems: Number(items[0].totalItems || 0), filledItems: Number(items[0].filledItems || 0) });
+  }));
+
   app.post('/api/tasks/:id/submit-review', authenticate, asyncRoute(async (req, res) => {
     await getPool().execute('UPDATE rfq_tasks SET status = ?, updated_at = ? WHERE id = ?', ['review', now(), req.params.id]);
-    const [admins] = await getPool().query("SELECT id FROM users WHERE role = 'admin' AND status = 'active'");
-    for (const admin of admins) {
+    const [reviewers] = await getPool().query("SELECT id FROM users WHERE role IN ('admin','manager') AND status = 'active'");
+    for (const reviewer of reviewers) {
       await getPool().execute(
         `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
          VALUES (?, ?, 'review', '询价任务等待审核', ?, ?, 0, ?)`,
-        [uuid(), admin.id, `${req.user.displayName}提交了任务`, req.params.id, now()]
+        [uuid(), reviewer.id, `${req.user.displayName}提交了任务`, req.params.id, now()]
       );
     }
     res.json({ ok: true });

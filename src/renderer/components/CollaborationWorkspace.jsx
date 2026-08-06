@@ -283,6 +283,17 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
     await load();
     onChanged();
   };
+  const revertItem = async item => {
+    try {
+      await window.electronAPI.collaboration.revertTaskItem(task.id, item.id);
+      setMessage(`第${item.lineNo}项已还原到上一个版本`);
+      await load();
+      onChanged();
+    } catch (e) { setError(cleanError(e)); }
+  };
+  const downloadCsv = async () => {
+    await window.electronAPI.collaboration.exportTaskCsv(task.id);
+  };
   const exportCompleted = async () => {
     if (items.some(item => item.dirty)) { setError('还有未保存的修改，请先保存对应行再导出'); return; }
     setError('');
@@ -297,7 +308,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
     <div className="collab-task-detail">
       <div className="collab-detail-toolbar"><button className="btn btn-outline" onClick={onBack}>← 返回任务列表</button><div><span className={`collab-status status-${task.status}`}>{STATUS_LABELS[task.status] || task.status}</span><span className="text-muted text-sm"> 当前版本 V{task.currentVersion}</span></div></div>
       <section className="card collab-task-summary">
-        <div className="card-header"><div><div className="text-sm text-muted">{task.taskNo}</div><h1>{task.title}</h1></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={() => window.electronAPI.collaboration.downloadTaskSource(task)}>下载原始询价单</button>{user.role === 'admin' && <button className="btn btn-primary" onClick={exportCompleted}>导出已填写询价单</button>}</div></div>
+        <div className="card-header"><div><div className="text-sm text-muted">{task.taskNo}</div><h1>{task.title}</h1></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={() => window.electronAPI.collaboration.downloadTaskSource(task)}>下载原始询价单</button><button className="btn btn-outline" onClick={downloadCsv}>导出CSV</button>{user.role === 'admin' && <button className="btn btn-primary" onClick={exportCompleted}>导出已填写询价单</button>}</div></div>
         <div className="collab-summary-grid"><div><span>请求人</span><strong>{task.requester || '未填写'}</strong></div><div><span>国家</span><strong>{task.country || '未填写'}</strong></div><div><span>客户</span><strong>{task.clientName || '未填写'}</strong></div><div><span>申请日期</span><strong>{formatDate(task.requestDate)}</strong></div><div><span>进口方式</span><strong>{task.importType || '未填写'}</strong></div><div><span>交付方式</span><strong>{task.deliveryType || '未填写'}</strong></div><div><span>付款方式</span><strong>{task.paymentType || '未填写'}</strong></div><div><span>截止时间</span><strong>{formatDate(task.deadline, true)}</strong></div></div>
       </section>
       <div className="collab-detail-tabs"><button className={tab === 'entry' ? 'active' : ''} onClick={() => setTab('entry')}>询价填写</button><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>修改记录</button></div>
@@ -314,7 +325,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
           <div className="table-container collab-shared-table-wrap"><table className="data-table collab-shared-table">
             <thead><tr><th>#</th><th>产品描述</th><th>代码</th><th className="number">数量</th><th>单位</th><th>中选供应商</th><th>含税运人民币</th><th>FOB（USD）</th><th>备注</th><th>附件</th><th>最后修改</th><th>操作</th></tr></thead>
             <tbody>{items.map((item, rowIndex) => {
-              return <tr key={item.id} className={item.dirty ? 'dirty' : ''}><td>{item.lineNo}</td><td className="collab-description-cell">{item.description}</td><td>{item.productCode || '—'}</td><td className="number">{item.quantity ?? '—'}</td><td>{item.unit || '—'}</td><td><strong>{item.selectedSupplier || '未选择'}</strong><button className="btn btn-outline btn-sm collab-pick-supplier" disabled={!selectedQuoteSet} onClick={() => setSelectingItemId(item.id)}>从表格勾选</button></td><td className="number">{item.totalRmb == null ? '—' : `¥${Number(item.totalRmb).toFixed(2)}`}</td><td><input className="form-input" type="number" min="0" step="0.01" value={item.fobUsd ?? ''} data-collab-cell={`${rowIndex}-0`} onKeyDown={event => navigateGrid(event, rowIndex, 0)} onChange={event => updateLocalItem(item.id, 'fobUsd', event.target.value)} /></td><td><input className="form-input" value={item.remarks || ''} data-collab-cell={`${rowIndex}-1`} onKeyDown={event => navigateGrid(event, rowIndex, 1)} onChange={event => updateLocalItem(item.id, 'remarks', event.target.value)} /></td><td><div className="collab-attachment-list">{(item.attachments || []).map(file => <button key={file.id} className="collab-attachment-link" onClick={() => window.electronAPI.collaboration.downloadTaskAttachment(task.id, item.id, file)}>{file.kind === 'image' ? '🖼' : '📎'} {file.name}</button>)}<button className="btn btn-outline btn-sm" onClick={() => attach(item)}>＋附件</button></div></td><td><span className="text-sm">{item.updatedByName || '—'}</span><span className="text-sm text-muted collab-block">{formatDate(item.updatedAt, true)}</span></td><td><button className="btn btn-primary btn-sm" disabled={!item.dirty || savingId === item.id} onClick={() => saveItem(item)}>{savingId === item.id ? '保存中…' : '保存本行'}</button></td></tr>;
+              return <tr key={item.id} className={item.dirty ? 'dirty' : ''}><td>{item.lineNo}</td><td className="collab-description-cell">{item.description}</td><td>{item.productCode || '—'}</td><td className="number">{item.quantity ?? '—'}</td><td>{item.unit || '—'}</td><td><strong>{item.selectedSupplier || '未选择'}</strong><button className="btn btn-outline btn-sm collab-pick-supplier" disabled={!selectedQuoteSet} onClick={() => setSelectingItemId(item.id)}>从表格勾选</button></td><td className="number">{item.totalRmb == null ? '—' : `¥${Number(item.totalRmb).toFixed(2)}`}</td><td><input className="form-input" type="number" min="0" step="0.01" value={item.fobUsd ?? ''} data-collab-cell={`${rowIndex}-0`} onKeyDown={event => navigateGrid(event, rowIndex, 0)} onChange={event => updateLocalItem(item.id, 'fobUsd', event.target.value)} /></td><td><input className="form-input" value={item.remarks || ''} data-collab-cell={`${rowIndex}-1`} onKeyDown={event => navigateGrid(event, rowIndex, 1)} onChange={event => updateLocalItem(item.id, 'remarks', event.target.value)} /></td><td><div className="collab-attachment-list">{(item.attachments || []).map(file => <button key={file.id} className="collab-attachment-link" onClick={() => window.electronAPI.collaboration.downloadTaskAttachment(task.id, item.id, file)}>{file.kind === 'image' ? '🖼' : '📎'} {file.name}</button>)}<button className="btn btn-outline btn-sm" onClick={() => attach(item)}>＋附件</button></div></td><td><span className="text-sm">{item.updatedByName || '—'}</span><span className="text-sm text-muted collab-block">{formatDate(item.updatedAt, true)}</span></td><td><button className="btn btn-primary btn-sm" disabled={!item.dirty || savingId === item.id} onClick={() => saveItem(item)}>{savingId === item.id ? '保存中…' : '保存本行'}</button><button className="btn btn-outline btn-sm" style={{marginLeft:4}} onClick={() => revertItem(item)} title="还原到上一个版本">还原</button></td></tr>;
             })}</tbody>
           </table></div>
           {selectingItemId && (() => {
@@ -339,26 +350,39 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState(null);
 
   const load = async () => {
     setLoading(true);
     setError('');
     try {
-      const [taskResult, userResult] = await Promise.all([
+      const [taskResult, userResult, statResult] = await Promise.all([
         window.electronAPI.collaboration.listTasks(),
-        window.electronAPI.collaboration.listUsers()
+        window.electronAPI.collaboration.listUsers(),
+        window.electronAPI.collaboration.getTaskStats().catch(() => null)
       ]);
       setTasks(taskResult.tasks || []);
       setUsers(userResult.users || []);
+      if (statResult) setStats(statResult);
     } catch (e) { setError(cleanError(e)); } finally { setLoading(false); }
   };
   useEffect(() => { load(); }, []);
   const activeTasks = useMemo(() => tasks.filter(task => task.status !== 'completed').length, [tasks]);
 
   if (selectedTaskId) return <TaskDetail taskId={selectedTaskId} user={user} onBack={() => { setSelectedTaskId(''); load(); }} onChanged={() => { load(); onNotificationsChanged(); }} onOpenExcelTool={onOpenExcelTool} />;
+  const statusCounts = { drafts: tasks.filter(t => t.status === 'draft').length, published: tasks.filter(t => t.status === 'published').length, inProgress: tasks.filter(t => t.status === 'in_progress').length, review: tasks.filter(t => t.status === 'review').length, completed: tasks.filter(t => t.status === 'completed').length };
   return (
     <div>
       {user.role === 'admin' && <div className="collab-admin-action-bar"><div><strong>管理员工作台</strong><span>当前共有 {activeTasks} 个未完成任务</span></div><button className="btn btn-primary btn-lg" onClick={() => setShowImport(true)}>＋ 上传并下发询价单</button></div>}
+      {stats && (
+        <div className="collab-stats-bar">
+          {statusCounts.drafts > 0 && <span>草稿 {statusCounts.drafts}</span>}
+          {statusCounts.inProgress > 0 && <span>进行中 {statusCounts.inProgress}</span>}
+          {statusCounts.review > 0 && <span className="review">待审核 {statusCounts.review}</span>}
+          {statusCounts.completed > 0 && <span className="done">已完成 {statusCounts.completed}</span>}
+          <span className="fill">填写进度 {stats.filledItems}/{stats.totalItems}</span>
+        </div>
+      )}
       {message && <div className="collab-form-success">{message}</div>}
       {error && <div className="collab-form-error">{error}</div>}
       {loading ? <div className="collab-loading">正在读取共享任务…</div> : <TaskList tasks={tasks} users={users} user={user} onSelect={setSelectedTaskId} onRefresh={load} />}

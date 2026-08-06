@@ -250,7 +250,16 @@ export default function CollaborationShell() {
       const incoming = result.notifications || [];
       if (!firstNotificationLoad.current) {
         const hasNew = incoming.some(item => !item.isRead && !knownNotificationIds.current.has(item.id));
-        if (hasNew) playNotificationSound();
+        if (hasNew) {
+          playNotificationSound();
+          for (const item of incoming) {
+            if (!item.isRead && !knownNotificationIds.current.has(item.id)) {
+              try {
+                new Notification(item.title, { body: item.message || '', tag: item.id });
+              } catch (_) {}
+            }
+          }
+        }
       }
       knownNotificationIds.current = new Set(incoming.map(item => item.id));
       firstNotificationLoad.current = false;
@@ -279,6 +288,7 @@ export default function CollaborationShell() {
       setUser(nextUser);
       firstNotificationLoad.current = true;
       setPhase('app');
+      try { Notification.requestPermission(); } catch (_) {}
     }} onReconfigure={() => setPhase('access')} onRefreshSetup={async () => {
       const result = await window.electronAPI.collaboration.getState();
       setConnection({ setup: result });

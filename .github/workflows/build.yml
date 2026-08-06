@@ -1,0 +1,30 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20' }
+      - run: npm install
+      - run: npm run build:renderer
+      - name: Package release
+        run: |
+          mkdir release
+          cp -r dist release/
+          cp -r server release/
+          cp -r src/main release/src-main
+          cp package.json release/
+          cp package-lock.json release/
+          cd release && zip -r ../latic-web-release.zip .
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: latic-web-release.zip
+          generate_release_notes: true

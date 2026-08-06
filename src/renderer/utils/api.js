@@ -96,7 +96,10 @@ const api = {
     createTaskSnapshot: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/snapshots`, { method: 'POST' }),
     listNotifications: () => request('/api/notifications'),
     readNotification: (notificationId) => request(`/api/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'PATCH' }),
-    getTaskAudit: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/audit`)
+    getTaskAudit: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/audit`),
+    revertTaskItem: (taskId, itemId) => request(`/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/revert`, { method: 'POST' }),
+    exportTaskCsv: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/export/csv`),
+    getTaskStats: () => request('/api/tasks/stats')
   },
   app: {
     getVersion: () => request('/api/health').then(r => r.service || ''),

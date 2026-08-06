@@ -1544,6 +1544,11 @@ body {
 .collab-admin-action-bar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 20px; margin-bottom: 18px; border-radius: 10px; color: #fff; background: linear-gradient(120deg, #315f9f, #477bc3); box-shadow: var(--shadow); }
 .collab-admin-action-bar strong, .collab-admin-action-bar span { display: block; }
 .collab-admin-action-bar span { margin-top: 4px; opacity: .82; font-size: 12px; }
+.collab-stats-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 0 16px; }
+.collab-stats-bar span { padding: 4px 10px; border-radius: 12px; font-size: 12px; background: #eef3f9; color: var(--text-secondary); }
+.collab-stats-bar span.review { background: #fff3e0; color: #e67e22; }
+.collab-stats-bar span.done { background: #e8f5e9; color: #2e7d32; }
+.collab-stats-bar span.fill { background: #e3f2fd; color: #1565c0; }
 .collab-workspace-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
 .collab-workspace-head h1 { font-size: 22px; margin-bottom: 5px; }
 .collab-workspace-head p { color: var(--text-secondary); font-size: 13px; }
