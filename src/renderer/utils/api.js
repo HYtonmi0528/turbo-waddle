@@ -98,7 +98,7 @@ const api = {
     readNotification: (notificationId) => request(`/api/notifications/${encodeURIComponent(notificationId)}/read`, { method: 'PATCH' }),
     getTaskAudit: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/audit`),
     revertTaskItem: (taskId, itemId) => request(`/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/revert`, { method: 'POST' }),
-    exportTaskCsv: (taskId) => request(`/api/tasks/${encodeURIComponent(taskId)}/export/csv`),
+    exportTaskCsv: (taskId) => download(`/api/tasks/${encodeURIComponent(taskId)}/export/csv`, '任务.csv'),
     getTaskStats: () => request('/api/tasks/stats')
   },
   app: {

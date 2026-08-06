@@ -162,13 +162,23 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
   const [selectingItemId, setSelectingItemId] = useState('');
 
   const load = async () => {
-    const result = await window.electronAPI.collaboration.getTask(taskId);
-    setTask(result.task);
-    setItems(result.items || []);
+    setError('');
+    try {
+      const result = await window.electronAPI.collaboration.getTask(taskId);
+      setTask(result.task || null);
+      setItems(result.items || []);
+    } catch (e) {
+      setError(cleanError(e));
+      setTask(null);
+    }
   };
   const loadAudit = async () => {
-    const result = await window.electronAPI.collaboration.getTaskAudit(taskId);
-    setAudit(result.audit || []);
+    try {
+      const result = await window.electronAPI.collaboration.getTaskAudit(taskId);
+      setAudit(result?.audit || []);
+    } catch (_) {
+      setAudit([]);
+    }
   };
   useEffect(() => {
     load();

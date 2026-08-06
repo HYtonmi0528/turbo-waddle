@@ -226,6 +226,21 @@ function registerIpcHandlers() {
   ipcMain.handle('collaboration:getTaskAudit', async (event, taskId) => {
     return collaborationClient.request(`/api/tasks/${encodeURIComponent(taskId)}/audit`);
   });
+  ipcMain.handle('collaboration:getTaskStats', async () => {
+    return collaborationClient.request('/api/tasks/stats');
+  });
+  ipcMain.handle('collaboration:exportTaskCsv', async (event, taskId) => {
+    return collaborationClient.downloadFile(
+      `/api/tasks/${encodeURIComponent(taskId)}/export/csv`,
+      ''
+    );
+  });
+  ipcMain.handle('collaboration:revertTaskItem', async (event, taskId, itemId) => {
+    return collaborationClient.request(
+      `/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/revert`,
+      { method: 'POST' }
+    );
+  });
 
   // ========== 模板管理 ==========
   ipcMain.handle('templates:list', async () => {

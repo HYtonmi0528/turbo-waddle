@@ -36,7 +36,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listNotifications: () => ipcRenderer.invoke('collaboration:listNotifications'),
     readNotification: (notificationId) =>
       ipcRenderer.invoke('collaboration:readNotification', notificationId),
-    getTaskAudit: (taskId) => ipcRenderer.invoke('collaboration:getTaskAudit', taskId)
+    getTaskAudit: (taskId) => ipcRenderer.invoke('collaboration:getTaskAudit', taskId),
+    getTaskStats: () => ipcRenderer.invoke('collaboration:getTaskStats'),
+    exportTaskCsv: (taskId) => ipcRenderer.invoke('collaboration:exportTaskCsv', taskId),
+    revertTaskItem: (taskId, itemId) => ipcRenderer.invoke('collaboration:revertTaskItem', taskId, itemId)
   },
   // 模板管理
   templates: {
