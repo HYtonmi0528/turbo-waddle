@@ -1619,3 +1619,27 @@ body {
   .collab-notification-row, .collab-audit-list > div { grid-template-columns: 1fr; gap: 4px; }
   .collab-auth-card { padding: 24px 20px; }
 }
+
+.db-browser { display: flex; gap: 0; height: 100%; background: #fff; border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); }
+.db-sidebar { width: 240px; flex-shrink: 0; padding: 16px; border-right: 1px solid var(--border); background: #f8f9fb; overflow-y: auto; }
+.db-sidebar-title { font-size: 14px; margin-bottom: 10px; color: var(--text); }
+.db-table-btn { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; margin-bottom: 2px; background: transparent; cursor: pointer; font-family: inherit; font-size: 13px; color: var(--text); text-align: left; }
+.db-table-btn:hover { background: #eef3f9; }
+.db-table-btn.active { background: var(--primary); color: #fff; }
+.db-table-btn.active .db-row-count { background: rgba(255,255,255,.25); }
+.db-row-count { padding: 1px 7px; border-radius: 10px; font-size: 11px; background: #e0e5ec; }
+.db-custom-section { margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border); }
+.db-custom-section h4 { font-size: 13px; margin-bottom: 8px; color: var(--text-secondary); }
+.db-sql-input { width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: 6px; font-family: 'Consolas','Microsoft YaHei',monospace; font-size: 12px; resize: vertical; background: #fff; }
+.db-sql-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 2px rgba(68,114,196,.15); }
+.db-custom-section .btn { margin-top: 6px; }
+.db-main { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.db-main-header { display: flex; align-items: center; gap: 14px; padding: 14px 20px; border-bottom: 1px solid var(--border); }
+.db-main-header h2 { font-size: 16px; }
+.db-info { color: var(--text-secondary); font-size: 12px; }
+.db-table-wrap { flex: 1; overflow: auto; }
+.db-data-table { font-size: 12px; white-space: nowrap; }
+.db-data-table th { position: sticky; top: 0; background: #f0f3f8; z-index: 1; }
+.db-data-table td { max-width: 300px; overflow: hidden; text-overflow: ellipsis; }
+.db-cell-null { color: #bbb; font-style: italic; }
+.db-pagination { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 12px; border-top: 1px solid var(--border); font-size: 13px; }

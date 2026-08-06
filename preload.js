@@ -110,7 +110,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listBackups: () => ipcRenderer.invoke('database:listBackups'),
     createBackup: () => ipcRenderer.invoke('database:createBackup'),
     openBackupFolder: () => ipcRenderer.invoke('database:openBackupFolder'),
-    restoreBackup: () => ipcRenderer.invoke('database:restoreBackup')
+    restoreBackup: () => ipcRenderer.invoke('database:restoreBackup'),
+    getTables: () => ipcRenderer.invoke('database:getTables'),
+    getTableData: (tableName, page, pageSize) => ipcRenderer.invoke('database:getTableData', tableName, page, pageSize),
+    runQuery: (sql) => ipcRenderer.invoke('database:runQuery', sql)
   },
   // 历史记录
   history: {

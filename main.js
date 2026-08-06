@@ -582,6 +582,35 @@ function registerIpcHandlers() {
     return restored;
   });
 
+  ipcMain.handle('database:getTables', async () => {
+    const db = getDatabase();
+    const tables = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    ).all();
+    return tables.map(t => {
+      const count = db.prepare(`SELECT COUNT(*) AS count FROM "${t.name}"`).get();
+      return { name: t.name, rowCount: count?.count || 0 };
+    });
+  });
+
+  ipcMain.handle('database:getTableData', async (event, tableName, page = 0, pageSize = 100) => {
+    const db = getDatabase();
+    const columns = db.prepare(`PRAGMA table_info("${tableName}")`).all().map(c => c.name);
+    const total = db.prepare(`SELECT COUNT(*) AS count FROM "${tableName}"`).get().count;
+    const rows = db.prepare(`SELECT * FROM "${tableName}" LIMIT ? OFFSET ?`)
+      .all(pageSize, page * pageSize);
+    return { columns, rows, total };
+  });
+
+  ipcMain.handle('database:runQuery', async (event, sql) => {
+    if (!sql || !/^\s*SELECT/i.test(sql)) throw new Error('仅支持 SELECT 查询');
+    const db = getDatabase();
+    const rows = db.prepare(sql).all();
+    if (rows.length === 0) return { columns: [], rows: [], total: 0 };
+    const columns = Object.keys(rows[0]);
+    return { columns, rows, total: rows.length };
+  });
+
   // ========== 历史记录 ==========
   ipcMain.handle('history:list', async () => {
     const db = getDatabase();
