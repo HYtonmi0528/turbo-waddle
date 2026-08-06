@@ -1,5 +1,7 @@
 const express = require('express');
 const multer = require('multer');
+const session = require('express-session');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -13,6 +15,7 @@ const {
 } = require('./lib/passwords');
 const { importRfqWorkbook } = require('./services/rfqImporter');
 const { exportCompletedRfq } = require('./services/rfqExporter');
+const { logger } = require('./lib/logger');
 
 const uuid = () => crypto.randomUUID();
 const now = () => new Date();
@@ -38,6 +41,47 @@ function createApp() {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '20mb' }));
+
+  app.use(session({
+    secret: crypto.randomBytes(32).toString('hex'),
+    name: 'latic_sid',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 30 * 24 * 60 * 60 * 1000
+    }
+  }));
+
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: { message: '登录尝试过于频繁，请15分钟后再试' }
+  });
+
+  const apiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 200,
+    message: { message: '请求过于频繁' }
+  });
+
+  app.use('/api/auth/login', loginLimiter);
+  app.use('/api/auth/register', loginLimiter);
+  app.use('/api/', apiLimiter);
+
+  app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+      const duration = Date.now() - start;
+      if (res.statusCode >= 400) {
+        logger.warn(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+      } else {
+        logger.info(`${req.method} ${req.originalUrl} ${res.statusCode} ${duration}ms`);
+      }
+    });
+    next();
+  });
 
   app.get('/api/health', asyncRoute(async (req, res) => {
     await getPool().query('SELECT 1');
@@ -76,7 +120,7 @@ function createApp() {
       await getPool().execute(
         `INSERT INTO users
          (id, username, display_name, password_hash, password_salt, role, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'employee', 'pending', ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, 'viewer', 'pending', ?, ?)`,
         [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, timestamp, timestamp]
       );
     } catch (error) {
@@ -93,8 +137,11 @@ function createApp() {
       return res.status(401).json({ message: '账号或密码错误' });
     }
     if (user.status !== 'active') return res.status(403).json({ message: '账号尚未启用或已被停用' });
-    if (entrance && entrance !== user.role) {
-      return res.status(403).json({ message: entrance === 'admin' ? '该账号不是管理员账号' : '请从管理员入口登录' });
+    if (entrance === 'admin' && !['admin', 'manager'].includes(user.role)) {
+      return res.status(403).json({ message: '该账号没有管理权限' });
+    }
+    if (entrance === 'employee' && ['admin', 'manager'].includes(user.role)) {
+      return res.status(403).json({ message: '请从管理员入口登录' });
     }
     const token = createSessionToken();
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
@@ -102,17 +149,34 @@ function createApp() {
       'INSERT INTO sessions (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)',
       [hashToken(token), user.id, expiresAt, now()]
     );
-    res.json({
-      token,
-      user: { id: user.id, username: user.username, displayName: user.display_name, role: user.role }
-    });
+    req.session.userId = user.id;
+    const responseUser = { id: user.id, username: user.username, displayName: user.display_name, role: user.role };
+    logger.info(`用户登录: ${user.display_name} (${user.role})`);
+    res.json({ token, user: responseUser });
   }));
 
   const authenticate = asyncRoute(async (req, res, next) => {
+    if (req.session?.userId) {
+      const [[user]] = await getPool().execute(
+        'SELECT id, username, display_name displayName, role, status FROM users WHERE id = ?',
+        [req.session.userId]
+      );
+      if (!user || user.status !== 'active') {
+        req.session.destroy(() => {});
+        return res.status(401).json({ message: '登录已失效，请重新登录' });
+      }
+      req.user = {
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role
+      };
+      return next();
+    }
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
     if (!token) return res.status(401).json({ message: '请先登录' });
     const [[user]] = await getPool().execute(
-      `SELECT u.id, u.username, u.display_name, u.role, u.status
+      `SELECT u.id, u.username, u.display_name displayName, u.role, u.status
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token_hash = ? AND s.expires_at > NOW(3)`,
       [hashToken(token)]
@@ -121,19 +185,22 @@ function createApp() {
     req.user = {
       id: user.id,
       username: user.username,
-      displayName: user.display_name,
+      displayName: user.displayName,
       role: user.role
     };
     next();
   });
-  const adminOnly = (req, res, next) => req.user.role === 'admin'
-    ? next()
-    : res.status(403).json({ message: '只有管理员可以执行此操作' });
+
+  const requireRole = (...roles) => (req, res, next) =>
+    roles.includes(req.user.role)
+      ? next()
+      : res.status(403).json({ message: '权限不足' });
 
   app.get('/api/auth/me', authenticate, (req, res) => res.json({ user: req.user }));
   app.post('/api/auth/logout', authenticate, asyncRoute(async (req, res) => {
     const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    await getPool().execute('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
+    if (token) await getPool().execute('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
+    req.session.destroy(() => {});
     res.json({ ok: true });
   }));
 
@@ -144,16 +211,17 @@ function createApp() {
     );
     res.json({ users: rows });
   }));
-  app.patch('/api/users/:id/status', authenticate, adminOnly, asyncRoute(async (req, res) => {
+  app.patch('/api/users/:id/status', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const status = ['active', 'disabled'].includes(req.body?.status) ? req.body.status : null;
     if (!status) return res.status(400).json({ message: '无效的账号状态' });
     await getPool().execute('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', [status, now(), req.params.id]);
     res.json({ ok: true });
   }));
-  app.patch('/api/users/:id/role', authenticate, adminOnly, asyncRoute(async (req, res) => {
-    const role = ['admin', 'employee'].includes(req.body?.role) ? req.body.role : null;
-    if (!role) return res.status(400).json({ message: '无效的角色' });
+  app.patch('/api/users/:id/role', authenticate, requireRole('admin'), asyncRoute(async (req, res) => {
+    const role = ['admin', 'manager', 'purchaser', 'viewer'].includes(req.body?.role) ? req.body.role : null;
+    if (!role) return res.status(400).json({ message: '无效的角色，可选：admin, manager, purchaser, viewer' });
     await getPool().execute('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, now(), req.params.id]);
+    logger.info(`用户角色变更: ${req.params.id} -> ${role} by ${req.user.displayName}`);
     res.json({ ok: true });
   }));
 
@@ -199,7 +267,7 @@ function createApp() {
     }
   }
 
-  app.post('/api/tasks/import', authenticate, adminOnly, upload.single('file'), asyncRoute(async (req, res) => {
+  app.post('/api/tasks/import', authenticate, requireRole('admin', 'manager'), upload.single('file'), asyncRoute(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: '请选择Excel询价单' });
     let imported;
     try {
@@ -315,7 +383,7 @@ function createApp() {
     res.download(task.source_storage_path, task.source_original_name);
   }));
 
-  app.get('/api/tasks/:id/export', authenticate, adminOnly, asyncRoute(async (req, res) => {
+  app.get('/api/tasks/:id/export', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const [[task]] = await getPool().execute(
       'SELECT id, source_original_name, source_storage_path FROM rfq_tasks WHERE id = ?',
       [req.params.id]
@@ -458,7 +526,7 @@ function createApp() {
     res.json({ ok: true });
   }));
 
-  app.post('/api/tasks/:id/snapshots', authenticate, adminOnly, asyncRoute(async (req, res) => {
+  app.post('/api/tasks/:id/snapshots', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const result = await withTransaction(async connection => {
       const [[task]] = await connection.execute('SELECT * FROM rfq_tasks WHERE id = ? FOR UPDATE', [req.params.id]);
       if (!task) return null;
@@ -509,8 +577,17 @@ function createApp() {
     res.json({ audit: rows });
   }));
 
+  const frontendDir = path.join(__dirname, '..', 'dist', 'renderer');
+  if (fs.existsSync(frontendDir)) {
+    app.use(express.static(frontendDir, { maxAge: '1d' }));
+    app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) return res.status(404).json({ message: '接口不存在' });
+      res.sendFile(path.join(frontendDir, 'index.html'));
+    });
+  }
+
   app.use((error, req, res, next) => {
-    console.error(error);
+    logger.error(`${req.method} ${req.originalUrl} - ${error.message}`, { stack: error.stack });
     if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ message: '文件不能超过100MB' });
     res.status(error.status || 500).json({ message: error.message || '服务器内部错误' });
   });

@@ -218,53 +218,26 @@ export default function CollaborationShell() {
   const [activeArea, setActiveArea] = useState('tasks');
   const [notifications, setNotifications] = useState([]);
   const [appVersion, setAppVersion] = useState('');
-  const [updateStatus, setUpdateStatus] = useState({ state: 'idle', percent: 0 });
   const knownNotificationIds = useRef(new Set());
   const firstNotificationLoad = useRef(true);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      const state = await window.electronAPI.collaboration.getState();
-      if (!mounted) return;
-      if (!state.serverUrl) {
-        setPhase('connection');
-        return;
-      }
-      setConnection({ serverUrl: state.serverUrl, setup: { initialized: true } });
       try {
+        const setup = await window.electronAPI.collaboration.getState();
+        if (!mounted) return;
+        setConnection({ setup });
         const restoredUser = await window.electronAPI.collaboration.restoreSession();
         if (!mounted) return;
         if (restoredUser) {
           setUser(restoredUser);
           setPhase('app');
-          return;
+        } else {
+          setPhase('access');
         }
-      } catch (_) {}
-      const remembered = await window.electronAPI.collaboration.getRememberedLogin();
-      if (!mounted) return;
-      if (remembered && remembered.password) {
-        try {
-          const result = await window.electronAPI.collaboration.login({
-            username: remembered.username,
-            password: remembered.password,
-            entrance: remembered.entrance,
-            remember: true
-          });
-          if (!mounted) return;
-          setUser(result.user);
-          setPhase('app');
-          return;
-        } catch (_) {
-          await window.electronAPI.collaboration.clearRememberedLogin();
-        }
-      }
-      try {
-        const result = await window.electronAPI.collaboration.configure(state.serverUrl);
-        setConnection({ serverUrl: result.serverUrl, setup: result.setup });
-        setPhase('access');
       } catch (_) {
-        setPhase('connection');
+        if (mounted) setPhase('access');
       }
     })();
     return () => { mounted = false; };
@@ -292,26 +265,7 @@ export default function CollaborationShell() {
     return () => clearInterval(timer);
   }, [user, loadNotifications]);
 
-  useEffect(() => {
-    let mounted = true;
-    const initUpdate = async () => {
-      const version = await window.electronAPI.app.getVersion();
-      if (mounted) setAppVersion(version);
-      const status = await window.electronAPI.update.getStatus();
-      if (mounted && status) setUpdateStatus(status);
-    };
-    initUpdate();
-    const removeListener = window.electronAPI.update.onStatus(next => {
-      if (mounted && next) setUpdateStatus(next);
-    });
-    return () => {
-      mounted = false;
-      if (removeListener) removeListener();
-    };
-  }, []);
-
   const logout = async () => {
-    await window.electronAPI.collaboration.clearRememberedLogin();
     await window.electronAPI.collaboration.logout();
     setUser(null);
     setPhase('access');
@@ -319,50 +273,26 @@ export default function CollaborationShell() {
   };
 
   if (showSplash) return <div className="startup-splash"><img src={appLogo} alt="LATIC" onAnimationEnd={() => setShowSplash(false)} /></div>;
-  if (phase === 'loading') return <div className="collab-loading">正在启动协作系统…</div>;
-  if (phase === 'connection') {
-    return <ConnectionScreen initialUrl={connection.serverUrl} onConnected={result => {
-      setConnection({ serverUrl: result.serverUrl, setup: result.setup });
-      setPhase('access');
-    }} />;
-  }
+  if (phase === 'loading') return <div className="collab-loading">正在启动询价协作系统…</div>;
   if (phase === 'access') {
     return <AccessScreen setup={connection.setup} onLogin={nextUser => {
       setUser(nextUser);
       firstNotificationLoad.current = true;
       setPhase('app');
-    }} onReconfigure={() => setPhase('connection')} onRefreshSetup={async () => {
-      const result = await window.electronAPI.collaboration.configure(connection.serverUrl);
-      setConnection({ serverUrl: result.serverUrl, setup: result.setup });
+    }} onReconfigure={() => setPhase('access')} onRefreshSetup={async () => {
+      const result = await window.electronAPI.collaboration.getState();
+      setConnection({ setup: result });
     }} />;
   }
 
   const unreadCount = notifications.filter(item => !item.isRead).length;
-  const updateLabel = () => {
-    if (updateStatus.state === 'downloading') return `下载 ${updateStatus.percent || 0}%`;
-    if (updateStatus.state === 'downloaded') return '重启安装更新';
-    if (updateStatus.state === 'checking') return '检查中…';
-    if (updateStatus.state === 'installing') return '安装中…';
-    return '检查更新';
-  };
-  const handleUpdateClick = async () => {
-    if (updateStatus.state === 'downloaded') {
-      await window.electronAPI.update.restartAndInstall();
-    } else if (!['checking', 'downloading', 'installing'].includes(updateStatus.state)) {
-      const next = await window.electronAPI.update.check();
-      if (next) setUpdateStatus(next);
-    }
-  };
   return (
     <div className="collab-shell">
       <header className="collab-shell-header">
         <div className="collab-brand"><img src={appLogo} alt="" /><div><strong>LATIC询价协作系统</strong><span>局域网内测版</span></div></div>
         <div className="collab-user-actions">
-          {appVersion && <span className="collab-version-tag">v{appVersion}</span>}
-          <button className={`collab-update-btn ${updateStatus.state === 'downloaded' ? 'update-ready' : ''}`} onClick={handleUpdateClick} disabled={['checking', 'downloading', 'installing'].includes(updateStatus.state)}>{updateLabel()}</button>
           <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
-          <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : '普通员工'}</span></div>
-          <button className="btn btn-outline btn-sm" onClick={() => setPhase('connection')}>服务器</button>
+          <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : user.role === 'manager' ? '经理' : user.role === 'purchaser' ? '采购员' : '查看者'}</span></div>
           <button className="btn btn-outline btn-sm" onClick={logout}>退出</button>
         </div>
       </header>

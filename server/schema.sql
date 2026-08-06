@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   display_name VARCHAR(100) NOT NULL,
   password_hash CHAR(128) NOT NULL,
   password_salt CHAR(32) NOT NULL,
-  role ENUM('admin', 'employee') NOT NULL DEFAULT 'employee',
+  role ENUM('admin', 'manager', 'purchaser', 'viewer') NOT NULL DEFAULT 'viewer',
   status ENUM('pending', 'active', 'disabled') NOT NULL DEFAULT 'pending',
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL
@@ -131,4 +131,57 @@ CREATE TABLE IF NOT EXISTS notifications (
   CONSTRAINT fk_notifications_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_notifications_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE CASCADE,
   INDEX idx_notifications_unread (user_id, is_read, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS data_entries (
+  id CHAR(36) PRIMARY KEY,
+  user_id CHAR(36) NOT NULL,
+  type VARCHAR(100) NOT NULL,
+  data JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_entries_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_entries_user_type (user_id, type, updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS generation_history (
+  id CHAR(36) PRIMARY KEY,
+  user_id CHAR(36) NOT NULL,
+  template_id CHAR(36),
+  template_name VARCHAR(200),
+  data_summary JSON,
+  file_path VARCHAR(600),
+  created_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_history_user FOREIGN KEY (user_id) REFERENCES users(id),
+  INDEX idx_history_user_date (user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS custom_system_fields (
+  field_key VARCHAR(80) PRIMARY KEY,
+  label VARCHAR(100) NOT NULL UNIQUE,
+  category VARCHAR(80) DEFAULT '自定义字段',
+  data_type VARCHAR(30) NOT NULL DEFAULT 'text',
+  created_by CHAR(36),
+  created_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_fields_creator FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS data_entry_drafts (
+  id VARCHAR(120) PRIMARY KEY,
+  user_id CHAR(36) NOT NULL,
+  template_id VARCHAR(80) NOT NULL,
+  payload JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_drafts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_drafts_user (user_id, template_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  user_id CHAR(36) NOT NULL,
+  setting_key VARCHAR(120) NOT NULL,
+  setting_value TEXT,
+  updated_at DATETIME(3) NOT NULL,
+  PRIMARY KEY (user_id, setting_key),
+  CONSTRAINT fk_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

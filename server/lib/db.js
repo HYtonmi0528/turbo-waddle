@@ -52,6 +52,16 @@ async function ensureServerSchema() {
       await getPool().query(`ALTER TABLE rfq_items ADD COLUMN \`${column}\` ${definition}`);
     }
   }
+
+  try {
+    const [[colInfo]] = await getPool().query(
+      `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'role'`
+    );
+    if (colInfo && !colInfo.COLUMN_TYPE.includes('manager')) {
+      await getPool().query("ALTER TABLE users MODIFY role ENUM('admin','manager','purchaser','viewer') NOT NULL DEFAULT 'viewer'");
+    }
+  } catch (_) {}
 }
 
 module.exports = { getPool, withTransaction, ensureServerSchema };

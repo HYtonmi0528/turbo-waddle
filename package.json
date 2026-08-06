@@ -1,6 +1,6 @@
 {
   "name": "latic-rfq-collaboration-test",
-  "version": "2.0.0-lan-beta.7",
+  "version": "2.1.0-web-beta.1",
   "description": "LATIC询价协作系统局域网内测版",
   "author": "LATIC",
   "repository": {
@@ -41,7 +41,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.png"
@@ -52,7 +54,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "LATIC询价协作系统-内测",
-      "installerLanguages": ["zh-CN"],
+      "installerLanguages": [
+        "zh-CN"
+      ],
       "language": "2052"
     },
     "asar": true,
@@ -73,12 +77,16 @@
     "electron-updater": "6.6.2",
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
+    "express-rate-limit": "^8.6.2",
+    "express-session": "^1.19.0",
     "jszip": "^3.10.1",
     "multer": "^2.0.2",
     "mysql2": "^3.14.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "uuid": "^9.0.0"
+    "uuid": "^9.0.0",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
     "@babel/core": "^7.23.0",
