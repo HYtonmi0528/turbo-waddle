@@ -643,7 +643,7 @@ function createApp() {
 
   const frontendDir = path.join(__dirname, '..', 'dist', 'renderer');
   if (fs.existsSync(frontendDir)) {
-    app.use(express.static(frontendDir, { maxAge: '1d' }));
+    app.use(express.static(frontendDir, { maxAge: '10s' }));
     app.get('*', (req, res) => {
       if (req.path.startsWith('/api/')) return res.status(404).json({ message: '接口不存在' });
       res.sendFile(path.join(frontendDir, 'index.html'));

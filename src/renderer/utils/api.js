@@ -185,5 +185,4 @@ const api = {
   }
 };
 
-export default api;
 window.electronAPI = api;
