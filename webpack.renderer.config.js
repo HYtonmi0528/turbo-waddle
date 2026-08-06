@@ -37,7 +37,8 @@ module.exports = {
   plugins: [
     new HtmlWebpackPlugin({
       template: './src/renderer/index.html',
-      filename: 'index.html'
+      filename: 'index.html',
+      version: require('./package.json').version
     })
   ]
 };

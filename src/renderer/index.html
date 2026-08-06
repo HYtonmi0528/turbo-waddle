@@ -8,7 +8,7 @@
 </head>
 <body>
   <div id="root"></div>
-  <script src="/api-init.js"></script>
+  <script src="/api-init.js?v=<%= htmlWebpackPlugin.options.version %>"></script>
   <script>if(!window.electronAPI||!window.electronAPI.rfq)location.reload()</script>
 </body>
 </html>
