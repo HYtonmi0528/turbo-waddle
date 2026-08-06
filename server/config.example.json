@@ -1,0 +1,14 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 3210
+  },
+  "mysql": {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "user": "latic_rfq_app",
+    "password": "请在初始化时生成",
+    "database": "latic_rfq"
+  },
+  "storageDir": "./server-data/files"
+}

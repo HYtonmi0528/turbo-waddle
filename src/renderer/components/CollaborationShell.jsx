@@ -1,0 +1,319 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import App from '../App';
+import CollaborationWorkspace from './CollaborationWorkspace';
+import AccountAdmin from './AccountAdmin';
+import RemoteTemplates from './RemoteTemplates';
+import appLogo from '../../../assets/app-logo.png';
+
+function cleanError(error) {
+  return String(error?.message || error || '操作失败')
+    .replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, '');
+}
+
+function ConnectionScreen({ initialUrl, onConnected }) {
+  const [serverUrl, setServerUrl] = useState(initialUrl || '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const connect = async event => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const result = await window.electronAPI.collaboration.configure(serverUrl);
+      onConnected(result);
+    } catch (e) {
+      setError(cleanError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="collab-auth-page">
+      <div className="collab-auth-card">
+        <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
+        <h1>连接询价协作服务器</h1>
+        <p>当前电脑作为服务器时使用本机地址；其他员工电脑填写服务器的局域网IP。</p>
+        <form onSubmit={connect}>
+          <label className="form-label" htmlFor="server-url">服务器地址</label>
+          <input
+            id="server-url"
+            className="form-input"
+            value={serverUrl}
+            onChange={event => setServerUrl(event.target.value)}
+            placeholder="http://192.168.1.100:3210"
+            required
+          />
+          <div className="collab-connection-help">
+            管理员和员工都填写同一个团队服务器地址。<br />
+            只有数据库服务运行在当前电脑时，才能使用 http://127.0.0.1:3210
+          </div>
+          <button type="button" className="btn btn-outline collab-full-button" onClick={() => setServerUrl('http://127.0.0.1:3210')}>这台电脑运行服务器，使用本机地址</button>
+          {error && <div className="collab-form-error">{error}</div>}
+          <button className="btn btn-primary btn-lg collab-full-button" disabled={busy}>
+            {busy ? '正在测试连接…' : '测试并保存连接'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
+  const [entrance, setEntrance] = useState('employee');
+  const getInitialMode = value => value?.initialized ? 'login' : 'choose-setup';
+  const [mode, setMode] = useState(getInitialMode(setup));
+  const [form, setForm] = useState({ username: '', displayName: '', password: '' });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [message, setMessage] = useState('');
+
+  const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
+
+  useEffect(() => {
+    setMode(getInitialMode(setup));
+  }, [setup?.initialized, setup?.canInitialize]);
+
+  const submit = async event => {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    setMessage('');
+    try {
+      if (mode === 'setup') {
+        await window.electronAPI.collaboration.setupAdmin(form);
+        setMessage('管理员创建成功，请使用管理员入口登录。');
+        setEntrance('admin');
+        setMode('login');
+      } else if (mode === 'register') {
+        const result = await window.electronAPI.collaboration.register(form);
+        setMessage(result.message || '注册成功，请等待管理员启用账号。');
+        setMode('login');
+      } else {
+        const result = await window.electronAPI.collaboration.login({
+          username: form.username,
+          password: form.password,
+          entrance
+        });
+        onLogin(result.user);
+      }
+    } catch (e) {
+      setError(cleanError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="collab-auth-page">
+      <div className="collab-auth-card collab-login-card">
+        <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
+        <h1>{mode === 'setup' ? '创建初始管理员' : mode === 'choose-setup' ? '系统尚未初始化' : mode === 'waiting' ? '等待负责人初始化' : mode === 'register' ? '员工注册' : '登录询价协作系统'}</h1>
+        {mode === 'choose-setup' && (
+          <div className="collab-waiting-setup">
+            <p>团队中只需要一位负责人创建第一个管理员账号，管理员不必使用服务器电脑。</p>
+            <button type="button" className="btn btn-primary btn-lg collab-full-button" onClick={() => setMode('setup')}>我是负责人，创建初始管理员</button>
+            <button type="button" className="btn btn-outline collab-full-button" onClick={() => setMode('waiting')}>我是员工，等待负责人创建</button>
+            <button type="button" className="btn btn-outline collab-full-button" onClick={onReconfigure}>← 返回服务器连接</button>
+          </div>
+        )}
+        {mode === 'waiting' && (
+          <div className="collab-waiting-setup">
+            <p>请等待负责人在任意一台已连接团队服务器的电脑上创建初始管理员。</p>
+            <button type="button" className="btn btn-primary btn-lg collab-full-button" onClick={onRefreshSetup}>重新检查</button>
+            <button type="button" className="btn btn-outline collab-full-button" onClick={() => setMode('choose-setup')}>← 返回身份选择</button>
+            <button type="button" className="btn btn-outline collab-full-button" onClick={onReconfigure}>← 返回服务器连接</button>
+          </div>
+        )}
+        {mode === 'login' && (
+          <div className="collab-entrance-switch">
+            <button type="button" className={entrance === 'employee' ? 'active' : ''} onClick={() => setEntrance('employee')}>普通员工入口</button>
+            <button type="button" className={entrance === 'admin' ? 'active' : ''} onClick={() => setEntrance('admin')}>管理员入口</button>
+          </div>
+        )}
+        {mode !== 'waiting' && mode !== 'choose-setup' && <form onSubmit={submit}>
+          {(mode === 'setup' || mode === 'register') && (
+            <div className="form-group">
+              <label className="form-label" htmlFor="display-name">姓名</label>
+              <input id="display-name" className="form-input" value={form.displayName} onChange={event => update('displayName', event.target.value)} required />
+            </div>
+          )}
+          <div className="form-group">
+            <label className="form-label" htmlFor="username">账号</label>
+            <input id="username" className="form-input" value={form.username} onChange={event => update('username', event.target.value)} required autoComplete="username" />
+          </div>
+          <div className="form-group">
+            <label className="form-label" htmlFor="password">密码</label>
+            <input id="password" className="form-input" type="password" minLength="8" value={form.password} onChange={event => update('password', event.target.value)} required autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
+          </div>
+          {error && <div className="collab-form-error">{error}</div>}
+          {message && <div className="collab-form-success">{message}</div>}
+          <button className="btn btn-primary btn-lg collab-full-button" disabled={busy}>
+            {busy ? '正在处理…' : mode === 'setup' ? '创建管理员' : mode === 'register' ? '提交注册' : '登录'}
+          </button>
+        </form>}
+        {mode !== 'waiting' && mode !== 'choose-setup' && <div className="collab-auth-links">
+          {mode === 'setup' ? (
+            <button type="button" onClick={() => setMode('choose-setup')}>← 返回身份选择</button>
+          ) : (
+            <button type="button" onClick={() => {
+              setError('');
+              setMessage('');
+              setMode(mode === 'register' ? 'login' : 'register');
+            }}>
+              {mode === 'register' ? '← 返回登录' : '注册普通员工账号'}
+            </button>
+          )}
+          {mode !== 'setup' && <button type="button" onClick={onReconfigure}>修改服务器连接</button>}
+        </div>}
+      </div>
+    </div>
+  );
+}
+
+function playNotificationSound() {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    const context = new AudioContext();
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    oscillator.frequency.setValueAtTime(880, context.currentTime);
+    oscillator.frequency.setValueAtTime(1174, context.currentTime + 0.12);
+    gain.gain.setValueAtTime(0.0001, context.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.3);
+    oscillator.connect(gain).connect(context.destination);
+    oscillator.start();
+    oscillator.stop(context.currentTime + 0.32);
+    oscillator.addEventListener('ended', () => context.close());
+  } catch (_) {}
+}
+
+export default function CollaborationShell() {
+  const [showSplash, setShowSplash] = useState(true);
+  const [phase, setPhase] = useState('loading');
+  const [connection, setConnection] = useState({ serverUrl: '', setup: null });
+  const [user, setUser] = useState(null);
+  const [activeArea, setActiveArea] = useState('tasks');
+  const [notifications, setNotifications] = useState([]);
+  const knownNotificationIds = useRef(new Set());
+  const firstNotificationLoad = useRef(true);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      const state = await window.electronAPI.collaboration.getState();
+      if (!mounted) return;
+      if (!state.serverUrl) {
+        setPhase('connection');
+        return;
+      }
+      setConnection({ serverUrl: state.serverUrl, setup: { initialized: true } });
+      const restoredUser = await window.electronAPI.collaboration.restoreSession();
+      if (!mounted) return;
+      if (restoredUser) {
+        setUser(restoredUser);
+        setPhase('app');
+      } else {
+        try {
+          const result = await window.electronAPI.collaboration.configure(state.serverUrl);
+          setConnection({ serverUrl: result.serverUrl, setup: result.setup });
+          setPhase('access');
+        } catch (_) {
+          setPhase('connection');
+        }
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
+
+  const loadNotifications = useCallback(async () => {
+    if (!user) return;
+    try {
+      const result = await window.electronAPI.collaboration.listNotifications();
+      const incoming = result.notifications || [];
+      if (!firstNotificationLoad.current) {
+        const hasNew = incoming.some(item => !item.isRead && !knownNotificationIds.current.has(item.id));
+        if (hasNew) playNotificationSound();
+      }
+      knownNotificationIds.current = new Set(incoming.map(item => item.id));
+      firstNotificationLoad.current = false;
+      setNotifications(incoming);
+    } catch (_) {}
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return undefined;
+    loadNotifications();
+    const timer = setInterval(loadNotifications, 10000);
+    return () => clearInterval(timer);
+  }, [user, loadNotifications]);
+
+  const logout = async () => {
+    await window.electronAPI.collaboration.logout();
+    setUser(null);
+    setPhase('access');
+    setActiveArea('tasks');
+  };
+
+  if (showSplash) return <div className="startup-splash"><img src={appLogo} alt="LATIC" onAnimationEnd={() => setShowSplash(false)} /></div>;
+  if (phase === 'loading') return <div className="collab-loading">正在启动协作系统…</div>;
+  if (phase === 'connection') {
+    return <ConnectionScreen initialUrl={connection.serverUrl} onConnected={result => {
+      setConnection({ serverUrl: result.serverUrl, setup: result.setup });
+      setPhase('access');
+    }} />;
+  }
+  if (phase === 'access') {
+    return <AccessScreen setup={connection.setup} onLogin={nextUser => {
+      setUser(nextUser);
+      firstNotificationLoad.current = true;
+      setPhase('app');
+    }} onReconfigure={() => setPhase('connection')} onRefreshSetup={async () => {
+      const result = await window.electronAPI.collaboration.configure(connection.serverUrl);
+      setConnection({ serverUrl: result.serverUrl, setup: result.setup });
+    }} />;
+  }
+
+  const unreadCount = notifications.filter(item => !item.isRead).length;
+  return (
+    <div className="collab-shell">
+      <header className="collab-shell-header">
+        <div className="collab-brand"><img src={appLogo} alt="" /><div><strong>LATIC询价协作系统</strong><span>局域网内测版</span></div></div>
+        <div className="collab-user-actions">
+          <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
+          <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : '普通员工'}</span></div>
+          <button className="btn btn-outline btn-sm" onClick={() => setPhase('connection')}>服务器</button>
+          <button className="btn btn-outline btn-sm" onClick={logout}>退出</button>
+        </div>
+      </header>
+      <nav className="collab-main-nav">
+        <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>共享询价任务</button>
+        <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>我的账号模板</button>
+        <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>Excel工具</button>
+        {user.role === 'admin' && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>账号管理</button>}
+      </nav>
+      <main className={`collab-shell-main ${activeArea === 'legacy' ? 'legacy-mode' : ''}`}>
+        {activeArea === 'tasks' && <CollaborationWorkspace user={user} onNotificationsChanged={loadNotifications} onOpenExcelTool={() => setActiveArea('legacy')} />}
+        {activeArea === 'templates' && <RemoteTemplates user={user} />}
+        {activeArea === 'legacy' && <App />}
+        {activeArea === 'users' && user.role === 'admin' && <AccountAdmin />}
+        {activeArea === 'notifications' && (
+          <section className="card collab-notification-panel">
+            <div className="card-header"><h2 className="card-title">通知中心</h2><button className="btn btn-outline btn-sm" onClick={loadNotifications}>刷新</button></div>
+            {notifications.length === 0 ? <div className="empty-state"><div className="empty-state-text">暂无通知</div></div> : notifications.map(item => (
+              <button key={item.id} className={`collab-notification-row ${item.isRead ? 'read' : ''}`} onClick={async () => {
+                if (!item.isRead) await window.electronAPI.collaboration.readNotification(item.id);
+                await loadNotifications();
+                if (item.taskId) setActiveArea('tasks');
+              }}>
+                <strong>{item.title}</strong><span>{item.message}</span><time>{new Date(item.createdAt).toLocaleString()}</time>
+              </button>
+            ))}
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
