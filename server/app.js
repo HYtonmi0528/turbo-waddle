@@ -560,7 +560,7 @@ function createApp() {
     const csv = [headers.join(','), ...items.map(i => headers.map(h => {
       const val = i[h === '行号' ? 'line_no' : h === '描述' ? 'description' : h === '数量' ? 'quantity' : h === '单位' ? 'unit' : h === '产品代码' ? 'product_code' : h === 'FOB USD' ? 'fob_usd' : h === '含税运RMB' ? 'total_rmb' : h === '供应商' ? 'selected_supplier' : 'remarks'];
       return val == null ? '' : `"${String(val).replace(/"/g, '""')}"`;
-    }).join(',')))].join('\n');
+    }).join(','))].join('\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(task.task_no || task.title)}.csv"`);
     res.end('\uFEFF' + csv);
