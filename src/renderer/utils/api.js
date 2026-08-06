@@ -102,8 +102,86 @@ const api = {
     getTaskStats: () => request('/api/tasks/stats')
   },
   app: {
-    getVersion: () => request('/api/health').then(r => r.service || ''),
-    getDesktopPath: () => ''
+    getVersion: () => Promise.resolve('web'),
+    getDesktopPath: () => Promise.resolve('')
+  },
+  templates: {
+    list: () => Promise.resolve([]),
+    save: () => Promise.resolve({}),
+    updateInfo: () => Promise.resolve({}),
+    delete: () => Promise.resolve(true),
+    import: () => Promise.resolve(null),
+    export: () => Promise.resolve(false),
+    duplicate: () => Promise.resolve({}),
+    getStructure: () => Promise.resolve({}),
+    updateStructure: () => Promise.resolve(true),
+    getPreview: () => Promise.resolve(null)
+  },
+  fieldMapping: {
+    get: () => Promise.resolve([]),
+    save: () => Promise.resolve(true),
+    getSystemFields: () => Promise.resolve([]),
+    addSystemField: () => Promise.resolve({}),
+    deleteSystemField: () => Promise.resolve(true)
+  },
+  excel: {
+    generate: () => Promise.resolve({ success: false, message: 'Web版暂不支持Excel生成' }),
+    preview: () => Promise.resolve({ success: false, message: 'Web版暂不支持预览' }),
+    openExisting: () => Promise.resolve({ success: false, canceled: true })
+  },
+  exchangeRate: {
+    getToday: () => Promise.resolve({ rate: 7.25, source: '默认' })
+  },
+  rfq: {
+    importProject: () => Promise.resolve({ canceled: true }),
+    listProjects: () => Promise.resolve([]),
+    getProject: () => Promise.resolve(null),
+    deleteProject: () => Promise.resolve(true),
+    saveQuoteSet: () => Promise.resolve({}),
+    listQuoteSets: () => Promise.resolve([]),
+    saveSelections: () => Promise.resolve(true),
+    generateFilled: () => Promise.resolve({ success: false, message: 'Web版暂不支持' })
+  },
+  attachments: {
+    select: () => Promise.resolve({ canceled: true })
+  },
+  data: {
+    saveEntry: () => Promise.resolve({ success: true }),
+    getEntries: () => Promise.resolve([]),
+    deleteEntry: () => Promise.resolve(true),
+    getEntry: () => Promise.resolve(null)
+  },
+  draft: {
+    get: () => Promise.resolve(null),
+    save: () => Promise.resolve({ success: true }),
+    delete: () => Promise.resolve(true)
+  },
+  database: {
+    listBackups: () => Promise.resolve([]),
+    createBackup: () => Promise.resolve({}),
+    openBackupFolder: () => Promise.resolve({ success: false }),
+    restoreBackup: () => Promise.resolve({ canceled: true }),
+    getTables: () => Promise.resolve([]),
+    getTableData: () => Promise.resolve({ columns: [], rows: [], total: 0 }),
+    runQuery: () => Promise.resolve({ columns: [], rows: [], total: 0 })
+  },
+  history: {
+    list: () => Promise.resolve([]),
+    add: () => Promise.resolve('')
+  },
+  dialog: {
+    openFile: () => Promise.resolve({ canceled: true, filePaths: [] }),
+    saveFile: () => Promise.resolve({ canceled: true }),
+    selectFolder: () => Promise.resolve(null),
+    createFolder: () => Promise.resolve({ success: false, message: 'Web版不支持' })
+  },
+  update: {
+    getStatus: () => Promise.resolve({ state: 'idle' }),
+    getInstalledReleaseNotes: () => Promise.resolve(null),
+    acknowledgeReleaseNotes: () => Promise.resolve(false),
+    check: () => Promise.resolve({ state: 'not-available' }),
+    restartAndInstall: () => Promise.resolve(false),
+    onStatus: () => (() => {})
   }
 };
 
