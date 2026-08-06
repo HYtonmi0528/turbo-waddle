@@ -62,6 +62,25 @@ async function ensureServerSchema() {
       await getPool().query("ALTER TABLE users MODIFY role ENUM('admin','manager','purchaser','viewer') NOT NULL DEFAULT 'viewer'");
     }
   } catch (_) {}
+
+  try {
+    await getPool().query(`CREATE TABLE IF NOT EXISTS quote_sets (
+      id CHAR(36) PRIMARY KEY, user_id CHAR(36) NOT NULL, name VARCHAR(200) NOT NULL,
+      project_id CHAR(36), options_json JSON, field_labels_json JSON,
+      created_at DATETIME(3) NOT NULL, updated_at DATETIME(3) NOT NULL,
+      INDEX idx_quotes_user (user_id, updated_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch (_) {}
+  try {
+    await getPool().query(`CREATE TABLE IF NOT EXISTS quote_items (
+      id CHAR(36) PRIMARY KEY, quote_set_id CHAR(36) NOT NULL, item_index INT NOT NULL,
+      supplier_name VARCHAR(255), model VARCHAR(200), reference VARCHAR(200),
+      description TEXT, price DECIMAL(18,4), total_price DECIMAL(18,4), total_rmb DECIMAL(18,4),
+      notes TEXT, after_sales TEXT, data_json JSON,
+      created_at DATETIME(3) NOT NULL,
+      INDEX idx_qitems_set (quote_set_id, item_index)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch (_) {}
 }
 
 module.exports = { getPool, withTransaction, ensureServerSchema };

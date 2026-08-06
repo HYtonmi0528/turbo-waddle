@@ -769,9 +769,72 @@ function createApp() {
   }));
 
   app.get('/api/quotes', authenticate, asyncRoute(async (req, res) => {
-    res.json({ quoteSets: [] });
+    const [rows] = await getPool().execute(
+      `SELECT id, name, project_id AS projectId, options_json AS options, field_labels_json AS fieldLabels,
+       created_at AS createdAt, updated_at AS updatedAt
+       FROM quote_sets WHERE user_id = ? ORDER BY updated_at DESC`,
+      [req.user.id]
+    );
+    const quoteSets = [];
+    for (const row of rows) {
+      const [items] = await getPool().execute(
+        `SELECT id, item_index AS _quoteItemIndex, supplier_name AS supplierName,
+         model, reference, description, price, total_price AS totalPrice, total_rmb AS totalRmb,
+         notes, after_sales AS afterSales, data_json AS data
+         FROM quote_items WHERE quote_set_id = ? ORDER BY item_index`,
+        [row.id]
+      );
+      quoteSets.push({
+        id: row.id, name: row.name, projectId: row.projectId,
+        options: parseJson(row.options, {}),
+        fieldLabels: parseJson(row.fieldLabels, {}),
+        batches: [{ category: '全部', items: items.map(i => ({ ...i, data: parseJson(i.data, {}) })) }],
+        createdAt: row.createdAt, updatedAt: row.updatedAt
+      });
+    }
+    res.json({ quoteSets });
   }));
   app.post('/api/quotes', authenticate, asyncRoute(async (req, res) => {
+    const { id, name, projectId, options, fieldLabels, batches } = req.body || {};
+    if (!name) return res.status(400).json({ message: '报价集名称不能为空' });
+    const quoteSetId = id || uuid();
+    const timestamp = now();
+    const allItems = [];
+    if (batches && batches.length) {
+      for (const batch of batches) {
+        for (const item of (batch.items || [])) {
+          allItems.push({ ...item, _category: batch.category });
+        }
+      }
+    }
+    await withTransaction(async conn => {
+      await conn.execute(
+        `INSERT INTO quote_sets (id, user_id, name, project_id, options_json, field_labels_json, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE name = VALUES(name), project_id = VALUES(project_id),
+         options_json = VALUES(options_json), field_labels_json = VALUES(field_labels_json), updated_at = VALUES(updated_at)`,
+        [quoteSetId, req.user.id, name, projectId || null, json(options), json(fieldLabels), timestamp, timestamp]
+      );
+      if (allItems.length) {
+        await conn.execute('DELETE FROM quote_items WHERE quote_set_id = ?', [quoteSetId]);
+        for (let i = 0; i < allItems.length; i++) {
+          const c = allItems[i];
+          await conn.execute(
+            `INSERT INTO quote_items (id, quote_set_id, item_index, supplier_name, model, reference,
+             description, price, total_price, total_rmb, notes, after_sales, data_json, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [uuid(), quoteSetId, i, c.supplierName || null, c.model || null, c.reference || null,
+             c.description || null, c.price || null, c.totalPrice || null, c.totalRmb || null,
+             c.notes || null, c.afterSales || null, json(c.data || c), timestamp]
+          );
+        }
+      }
+    });
+    res.json({ id: quoteSetId });
+  }));
+  app.delete('/api/quotes/:id', authenticate, asyncRoute(async (req, res) => {
+    await getPool().execute('DELETE FROM quote_items WHERE quote_set_id = ?', [req.params.id]);
+    await getPool().execute('DELETE FROM quote_sets WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
     res.json({ ok: true });
   }));
 
