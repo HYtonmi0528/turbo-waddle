@@ -5,7 +5,7 @@ module.exports = {
   entry: './src/renderer/index.js',
   output: {
     path: path.resolve(__dirname, 'dist', 'renderer'),
-    filename: 'bundle.js',
+    filename: 'bundle.[contenthash:8].js',
     clean: true
   },
   target: 'web',
