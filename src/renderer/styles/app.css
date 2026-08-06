@@ -1520,6 +1520,9 @@ body {
 .collab-brand strong { font-size: 16px; }
 .collab-brand span, .collab-user-actions span { margin-top: 2px; opacity: .78; font-size: 11px; }
 .collab-user-actions { display: flex; align-items: center; gap: 12px; }
+.collab-version-tag { font-size: 11px; opacity: .65; }
+.collab-update-btn { border: 1px solid rgba(255,255,255,.35); border-radius: 6px; padding: 4px 10px; color: #fff; background: rgba(255,255,255,.1); font-family: inherit; font-size: 11px; cursor: pointer; }
+.collab-update-btn:hover { background: rgba(255,255,255,.22); }
 .collab-notification-button { position: relative; border: 1px solid rgba(255,255,255,.35); border-radius: 8px; padding: 7px 10px; color: #fff; background: rgba(255,255,255,.08); cursor: pointer; }
 .collab-notification-button span { position: absolute; top: -7px; right: -7px; min-width: 19px; height: 19px; display: grid; place-items: center; padding: 0 4px; border-radius: 10px; color: #fff; background: var(--danger); font-size: 10px; opacity: 1; }
 .collab-main-nav { flex: 0 0 48px; display: flex; gap: 2px; padding: 0 22px; overflow-x: auto; background: #fff; border-bottom: 1px solid var(--border); }
@@ -1529,6 +1532,8 @@ body {
 .collab-shell-main.legacy-mode { padding: 0; overflow: hidden; }
 .collab-shell-main.legacy-mode .app-container { height: calc(100vh - 112px); }
 .collab-shell-main.legacy-mode .startup-splash { display: none; }
+.collab-shell-main.legacy-mode .app-header { display: none; }
+.collab-shell-main.legacy-mode .update-status-card { bottom: 12px; }
 
 .collab-admin-action-bar { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px 20px; margin-bottom: 18px; border-radius: 10px; color: #fff; background: linear-gradient(120deg, #315f9f, #477bc3); box-shadow: var(--shadow); }
 .collab-admin-action-bar strong, .collab-admin-action-bar span { display: block; }

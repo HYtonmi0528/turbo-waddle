@@ -197,6 +197,8 @@ export default function CollaborationShell() {
   const [user, setUser] = useState(null);
   const [activeArea, setActiveArea] = useState('tasks');
   const [notifications, setNotifications] = useState([]);
+  const [appVersion, setAppVersion] = useState('');
+  const [updateStatus, setUpdateStatus] = useState({ state: 'idle', percent: 0 });
   const knownNotificationIds = useRef(new Set());
   const firstNotificationLoad = useRef(true);
 
@@ -250,6 +252,24 @@ export default function CollaborationShell() {
     return () => clearInterval(timer);
   }, [user, loadNotifications]);
 
+  useEffect(() => {
+    let mounted = true;
+    const initUpdate = async () => {
+      const version = await window.electronAPI.app.getVersion();
+      if (mounted) setAppVersion(version);
+      const status = await window.electronAPI.update.getStatus();
+      if (mounted && status) setUpdateStatus(status);
+    };
+    initUpdate();
+    const removeListener = window.electronAPI.update.onStatus(next => {
+      if (mounted && next) setUpdateStatus(next);
+    });
+    return () => {
+      mounted = false;
+      if (removeListener) removeListener();
+    };
+  }, []);
+
   const logout = async () => {
     await window.electronAPI.collaboration.logout();
     setUser(null);
@@ -277,11 +297,27 @@ export default function CollaborationShell() {
   }
 
   const unreadCount = notifications.filter(item => !item.isRead).length;
+  const updateLabel = () => {
+    if (updateStatus.state === 'downloading') return `下载 ${updateStatus.percent || 0}%`;
+    if (updateStatus.state === 'downloaded') return '新版本就绪';
+    if (updateStatus.state === 'checking') return '检查中';
+    return null;
+  };
+  const handleUpdateClick = async () => {
+    if (updateStatus.state === 'downloaded') {
+      await window.electronAPI.update.restartAndInstall();
+    } else {
+      const next = await window.electronAPI.update.check();
+      if (next) setUpdateStatus(next);
+    }
+  };
   return (
     <div className="collab-shell">
       <header className="collab-shell-header">
         <div className="collab-brand"><img src={appLogo} alt="" /><div><strong>LATIC询价协作系统</strong><span>局域网内测版</span></div></div>
         <div className="collab-user-actions">
+          {appVersion && <span className="collab-version-tag">v{appVersion}</span>}
+          {updateLabel() && <button className="collab-update-btn" onClick={handleUpdateClick}>{updateLabel()}</button>}
           <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
           <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : '普通员工'}</span></div>
           <button className="btn btn-outline btn-sm" onClick={() => setPhase('connection')}>服务器</button>
