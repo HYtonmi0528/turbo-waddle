@@ -68,8 +68,20 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
 
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
+
+  useEffect(() => {
+    (async () => {
+      const saved = await window.electronAPI.collaboration.getRememberedLogin();
+      if (saved) {
+        setForm(current => ({ ...current, username: saved.username }));
+        setRememberMe(true);
+        if (saved.entrance) setEntrance(saved.entrance);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     setMode(getInitialMode(setup));
@@ -94,7 +106,8 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
         const result = await window.electronAPI.collaboration.login({
           username: form.username,
           password: form.password,
-          entrance
+          entrance,
+          remember: rememberMe
         });
         onLogin(result.user);
       }
@@ -147,6 +160,12 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
             <label className="form-label" htmlFor="password">密码</label>
             <input id="password" className="form-input" type="password" minLength="8" value={form.password} onChange={event => update('password', event.target.value)} required autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
           </div>
+          {mode === 'login' && (
+            <label className="form-checkbox">
+              <input type="checkbox" checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} />
+              记住密码（下次自动登录）
+            </label>
+          )}
           {error && <div className="collab-form-error">{error}</div>}
           {message && <div className="collab-form-success">{message}</div>}
           <button className="btn btn-primary btn-lg collab-full-button" disabled={busy}>
@@ -212,19 +231,39 @@ export default function CollaborationShell() {
         return;
       }
       setConnection({ serverUrl: state.serverUrl, setup: { initialized: true } });
-      const restoredUser = await window.electronAPI.collaboration.restoreSession();
-      if (!mounted) return;
-      if (restoredUser) {
-        setUser(restoredUser);
-        setPhase('app');
-      } else {
-        try {
-          const result = await window.electronAPI.collaboration.configure(state.serverUrl);
-          setConnection({ serverUrl: result.serverUrl, setup: result.setup });
-          setPhase('access');
-        } catch (_) {
-          setPhase('connection');
+      try {
+        const restoredUser = await window.electronAPI.collaboration.restoreSession();
+        if (!mounted) return;
+        if (restoredUser) {
+          setUser(restoredUser);
+          setPhase('app');
+          return;
         }
+      } catch (_) {}
+      const remembered = await window.electronAPI.collaboration.getRememberedLogin();
+      if (!mounted) return;
+      if (remembered && remembered.password) {
+        try {
+          const result = await window.electronAPI.collaboration.login({
+            username: remembered.username,
+            password: remembered.password,
+            entrance: remembered.entrance,
+            remember: true
+          });
+          if (!mounted) return;
+          setUser(result.user);
+          setPhase('app');
+          return;
+        } catch (_) {
+          await window.electronAPI.collaboration.clearRememberedLogin();
+        }
+      }
+      try {
+        const result = await window.electronAPI.collaboration.configure(state.serverUrl);
+        setConnection({ serverUrl: result.serverUrl, setup: result.setup });
+        setPhase('access');
+      } catch (_) {
+        setPhase('connection');
       }
     })();
     return () => { mounted = false; };
@@ -271,6 +310,7 @@ export default function CollaborationShell() {
   }, []);
 
   const logout = async () => {
+    await window.electronAPI.collaboration.clearRememberedLogin();
     await window.electronAPI.collaboration.logout();
     setUser(null);
     setPhase('access');
@@ -299,14 +339,15 @@ export default function CollaborationShell() {
   const unreadCount = notifications.filter(item => !item.isRead).length;
   const updateLabel = () => {
     if (updateStatus.state === 'downloading') return `下载 ${updateStatus.percent || 0}%`;
-    if (updateStatus.state === 'downloaded') return '新版本就绪';
-    if (updateStatus.state === 'checking') return '检查中';
-    return null;
+    if (updateStatus.state === 'downloaded') return '重启安装更新';
+    if (updateStatus.state === 'checking') return '检查中…';
+    if (updateStatus.state === 'installing') return '安装中…';
+    return '检查更新';
   };
   const handleUpdateClick = async () => {
     if (updateStatus.state === 'downloaded') {
       await window.electronAPI.update.restartAndInstall();
-    } else {
+    } else if (!['checking', 'downloading', 'installing'].includes(updateStatus.state)) {
       const next = await window.electronAPI.update.check();
       if (next) setUpdateStatus(next);
     }
@@ -317,7 +358,7 @@ export default function CollaborationShell() {
         <div className="collab-brand"><img src={appLogo} alt="" /><div><strong>LATIC询价协作系统</strong><span>局域网内测版</span></div></div>
         <div className="collab-user-actions">
           {appVersion && <span className="collab-version-tag">v{appVersion}</span>}
-          {updateLabel() && <button className="collab-update-btn" onClick={handleUpdateClick}>{updateLabel()}</button>}
+          <button className={`collab-update-btn ${updateStatus.state === 'downloaded' ? 'update-ready' : ''}`} onClick={handleUpdateClick} disabled={['checking', 'downloading', 'installing'].includes(updateStatus.state)}>{updateLabel()}</button>
           <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
           <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : '普通员工'}</span></div>
           <button className="btn btn-outline btn-sm" onClick={() => setPhase('connection')}>服务器</button>

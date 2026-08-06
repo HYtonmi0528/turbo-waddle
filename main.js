@@ -117,12 +117,19 @@ function registerIpcHandlers() {
     return collaborationClient.login(payload);
   });
   ipcMain.handle('collaboration:logout', async () => collaborationClient.logout());
+  ipcMain.handle('collaboration:getRememberedLogin', async () => collaborationClient.getRememberedLogin());
+  ipcMain.handle('collaboration:clearRememberedLogin', async () => collaborationClient.clearRememberedLogin());
   ipcMain.handle('collaboration:listUsers', async () => {
     return collaborationClient.request('/api/users');
   });
   ipcMain.handle('collaboration:updateUserStatus', async (event, userId, status) => {
     return collaborationClient.request(`/api/users/${encodeURIComponent(userId)}/status`, {
       method: 'PATCH', body: { status }
+    });
+  });
+  ipcMain.handle('collaboration:updateUserRole', async (event, userId, role) => {
+    return collaborationClient.request(`/api/users/${encodeURIComponent(userId)}/role`, {
+      method: 'PATCH', body: { role }
     });
   });
   ipcMain.handle('collaboration:listRemoteTemplates', async () => {

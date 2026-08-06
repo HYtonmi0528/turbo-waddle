@@ -150,6 +150,12 @@ function createApp() {
     await getPool().execute('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', [status, now(), req.params.id]);
     res.json({ ok: true });
   }));
+  app.patch('/api/users/:id/role', authenticate, adminOnly, asyncRoute(async (req, res) => {
+    const role = ['admin', 'employee'].includes(req.body?.role) ? req.body.role : null;
+    if (!role) return res.status(400).json({ message: '无效的角色' });
+    await getPool().execute('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, now(), req.params.id]);
+    res.json({ ok: true });
+  }));
 
   app.get('/api/templates', authenticate, asyncRoute(async (req, res) => {
     const [rows] = await getPool().execute(

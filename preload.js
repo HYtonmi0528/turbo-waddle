@@ -9,9 +9,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     register: (payload) => ipcRenderer.invoke('collaboration:register', payload),
     login: (payload) => ipcRenderer.invoke('collaboration:login', payload),
     logout: () => ipcRenderer.invoke('collaboration:logout'),
+    getRememberedLogin: () => ipcRenderer.invoke('collaboration:getRememberedLogin'),
+    clearRememberedLogin: () => ipcRenderer.invoke('collaboration:clearRememberedLogin'),
     listUsers: () => ipcRenderer.invoke('collaboration:listUsers'),
     updateUserStatus: (userId, status) =>
       ipcRenderer.invoke('collaboration:updateUserStatus', userId, status),
+    updateUserRole: (userId, role) =>
+      ipcRenderer.invoke('collaboration:updateUserRole', userId, role),
     listRemoteTemplates: () => ipcRenderer.invoke('collaboration:listRemoteTemplates'),
     saveRemoteTemplate: (template) => ipcRenderer.invoke('collaboration:saveRemoteTemplate', template),
     listTasks: () => ipcRenderer.invoke('collaboration:listTasks'),

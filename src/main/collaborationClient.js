@@ -1,10 +1,28 @@
 const Store = require('electron-store');
 const fs = require('fs');
 const path = require('path');
+const { safeStorage } = require('electron');
 
 class CollaborationClient {
   constructor() {
     this.store = new Store({ name: 'collaboration-session' });
+  }
+
+  encrypt(text) {
+    if (!text) return null;
+    if (!safeStorage.isEncryptionAvailable()) return Buffer.from(text, 'utf8').toString('base64');
+    return safeStorage.encryptString(text).toString('base64');
+  }
+
+  decrypt(base64) {
+    if (!base64) return null;
+    try {
+      const buffer = Buffer.from(base64, 'base64');
+      if (!safeStorage.isEncryptionAvailable()) return buffer.toString('utf8');
+      return safeStorage.decryptString(buffer);
+    } catch (_) {
+      return null;
+    }
   }
 
   normalizeServerUrl(value) {
@@ -90,18 +108,42 @@ class CollaborationClient {
     const result = await this.request('/api/auth/login', { method: 'POST', body: payload, auth: false });
     this.store.set('token', result.token);
     this.store.set('user', result.user);
+    if (payload.remember) {
+      this.store.set('rememberedLogin', {
+        username: payload.username,
+        entrance: payload.entrance || result.user.role,
+        passwordEncrypted: this.encrypt(payload.password)
+      });
+    }
     return result;
+  }
+
+  getRememberedLogin() {
+    const saved = this.store.get('rememberedLogin', null);
+    if (!saved) return null;
+    return {
+      username: saved.username,
+      entrance: saved.entrance,
+      password: this.decrypt(saved.passwordEncrypted)
+    };
+  }
+
+  clearRememberedLogin() {
+    this.store.delete('rememberedLogin');
   }
 
   async restoreSession() {
     if (!this.store.get('token')) return null;
     try {
-      const result = await this.request('/api/auth/me');
+      const result = await this.request('/api/auth/me', { timeout: 5000 });
       this.store.set('user', result.user);
       return result.user;
-    } catch (_) {
-      this.clearSession();
-      return null;
+    } catch (error) {
+      if (error.status === 401) {
+        this.clearSession();
+        return null;
+      }
+      throw error;
     }
   }
 

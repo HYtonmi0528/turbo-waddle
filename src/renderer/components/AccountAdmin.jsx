@@ -17,9 +17,15 @@ export default function AccountAdmin() {
     await load();
   };
 
+  const changeRole = async (user, role) => {
+    await window.electronAPI.collaboration.updateUserRole(user.id, role);
+    setMessage(`${user.displayName} 已${role === 'admin' ? '设为管理员' : '取消管理员'}`);
+    await load();
+  };
+
   return (
     <section className="card">
-      <div className="card-header"><div><h2 className="card-title">员工账号管理</h2><p className="text-muted text-sm">新注册员工需要管理员启用后才能登录。</p></div><button className="btn btn-outline" onClick={load}>刷新</button></div>
+      <div className="card-header"><div><h2 className="card-title">员工账号管理</h2><p className="text-muted text-sm">新注册员工需要管理员启用后才能登录。管理员可有多人。</p></div><button className="btn btn-outline" onClick={load}>刷新</button></div>
       {message && <div className="collab-form-success">{message}</div>}
       <div className="table-container collab-account-table">
         <table className="data-table">
@@ -29,9 +35,16 @@ export default function AccountAdmin() {
               <td>{user.displayName}</td><td>{user.username}</td><td>{user.role === 'admin' ? '管理员' : '普通员工'}</td>
               <td><span className={`badge ${user.status === 'active' ? 'badge-success' : 'badge-primary'}`}>{user.status === 'active' ? '已启用' : user.status === 'pending' ? '待审核' : '已停用'}</span></td>
               <td>{new Date(user.createdAt).toLocaleString()}</td>
-              <td>{user.role !== 'admin' && (user.status === 'active'
-                ? <button className="btn btn-danger btn-sm" onClick={() => changeStatus(user, 'disabled')}>停用</button>
-                : <button className="btn btn-success btn-sm" onClick={() => changeStatus(user, 'active')}>启用</button>)}</td>
+              <td className="collab-account-actions">
+                {user.status === 'active' && (
+                  <button className="btn btn-outline btn-sm" onClick={() => changeRole(user, user.role === 'admin' ? 'employee' : 'admin')}>
+                    {user.role === 'admin' ? '取消管理员' : '设为管理员'}
+                  </button>
+                )}
+                {user.role !== 'admin' && (user.status === 'active'
+                  ? <button className="btn btn-danger btn-sm" onClick={() => changeStatus(user, 'disabled')}>停用</button>
+                  : <button className="btn btn-success btn-sm" onClick={() => changeStatus(user, 'active')}>启用</button>)}
+              </td>
             </tr>
           ))}</tbody>
         </table>
