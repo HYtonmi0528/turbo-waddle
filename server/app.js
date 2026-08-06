@@ -44,8 +44,14 @@ function createApp() {
   app.disable('x-powered-by');
   app.use(express.json({ limit: '20mb' }));
 
+  const sessionSecret = (config.sessionSecret && config.sessionSecret.length >= 16)
+    ? config.sessionSecret
+    : (config.mysql && config.mysql.password && config.mysql.password.length >= 16
+      ? config.mysql.password
+      : crypto.randomBytes(32).toString('hex'));
+
   app.use(session({
-    secret: crypto.randomBytes(32).toString('hex'),
+    secret: sessionSecret,
     name: 'latic_sid',
     resave: false,
     saveUninitialized: false,
@@ -882,10 +888,6 @@ function createApp() {
     path.join(__dirname, 'api-init-compact.js'), 'utf8'
   );
   if (fs.existsSync(frontendDir)) {
-    app.use('/api-init.js', (req, res) => {
-      res.set('Cache-Control', 'no-cache');
-      res.type('js').send(API_INIT_JS);
-    });
     app.use(express.static(frontendDir, {
       maxAge: 0,
       setHeaders: (res) => res.set('Cache-Control', 'no-cache, no-store, must-revalidate')

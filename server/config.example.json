@@ -10,5 +10,6 @@
     "password": "请在初始化时生成",
     "database": "latic_rfq"
   },
-  "storageDir": "./server-data/files"
+  "storageDir": "./server-data/files",
+  "sessionSecret": "替换为32位以上随机字符串"
 }
