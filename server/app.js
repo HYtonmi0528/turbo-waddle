@@ -249,18 +249,30 @@ function createApp() {
       isShared: Boolean(row.isShared)
     })) });
   }));
+  app.get('/api/templates/shared', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().execute(
+      `SELECT t.id, t.name, t.type, t.description, t.structure_json AS structure, t.mappings_json AS mappings,
+              u.display_name AS ownerName, t.updated_at AS updatedAt
+       FROM user_templates t JOIN users u ON u.id = t.owner_id
+       WHERE t.is_shared = 1 AND t.owner_id != ? ORDER BY t.updated_at DESC`,
+      [req.user.id]
+    );
+    res.json(rows.map(r => ({ ...r, structure: parseJson(r.structure), mappings: parseJson(r.mappings) })));
+  }));
   app.post('/api/templates', authenticate, asyncRoute(async (req, res) => {
-    const id = uuid();
+    const id = req.body.id || uuid();
     const timestamp = now();
     const template = req.body || {};
     if (!template.name) return res.status(400).json({ message: '模板名称不能为空' });
+    const isShared = template.isShared != null ? (template.isShared ? 1 : 0) : 0;
     await getPool().execute(
       `INSERT INTO user_templates
        (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type), is_shared = VALUES(is_shared), updated_at = VALUES(updated_at)`,
       [id, req.user.id, template.name, template.type || '通用', template.description || null,
         template.originalName || null, json(template.structure), json(template.mappings || []),
-        template.isShared ? 1 : 0, timestamp, timestamp]
+        isShared, id === req.body.id ? undefined : timestamp, timestamp]
     );
     res.status(201).json({ id });
   }));
@@ -352,6 +364,25 @@ function createApp() {
     const [rows] = await getPool().query('SELECT status, COUNT(*) AS count FROM rfq_tasks GROUP BY status');
     const [items] = await getPool().query('SELECT COUNT(*) AS totalItems, SUM(CASE WHEN fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS filledItems FROM rfq_items');
     res.json({ byStatus: rows, totalItems: Number(items[0].totalItems || 0), filledItems: Number(items[0].filledItems || 0) });
+  }));
+
+  app.get('/api/search', authenticate, asyncRoute(async (req, res) => {
+    const q = (req.query.q || '').trim();
+    if (!q || q.length < 2) return res.json({ tasks: [], items: [] });
+    const like = `%${q}%`;
+    const [taskRows] = await getPool().execute(
+      'SELECT id, task_no AS taskNo, title, status FROM rfq_tasks WHERE title LIKE ? OR task_no LIKE ? OR requester LIKE ? LIMIT 20',
+      [like, like, like]
+    );
+    const [itemRows] = await getPool().execute(
+      `SELECT i.id, i.task_id AS taskId, i.line_no AS lineNo, i.description, i.selected_supplier AS supplier,
+              t.title AS taskTitle, t.task_no AS taskNo
+       FROM rfq_items i JOIN rfq_tasks t ON t.id = i.task_id
+       WHERE i.description LIKE ? OR i.product_code LIKE ? OR i.selected_supplier LIKE ?
+       LIMIT 20`,
+      [like, like, like]
+    );
+    res.json({ tasks: taskRows, items: itemRows });
   }));
 
   app.get('/api/tasks/:id', authenticate, asyncRoute(async (req, res) => {
