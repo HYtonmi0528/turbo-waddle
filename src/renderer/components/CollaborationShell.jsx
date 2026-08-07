@@ -71,6 +71,7 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
+  const [registerRole, setRegisterRole] = useState('viewer');
 
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
 
@@ -101,7 +102,7 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
         setEntrance('admin');
         setMode('login');
       } else if (mode === 'register') {
-        const result = await window.electronAPI.collaboration.register(form);
+        const result = await window.electronAPI.collaboration.register({ ...form, role: registerRole });
         setMessage(result.message || '注册成功，请等待管理员启用账号。');
         setMode('login');
       } else {
@@ -152,6 +153,17 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
             <div className="form-group">
               <label className="form-label" htmlFor="display-name">姓名</label>
               <input id="display-name" className="form-input" value={form.displayName} onChange={event => update('displayName', event.target.value)} required />
+            </div>
+          )}
+          {mode === 'register' && (
+            <div className="form-group">
+              <label className="form-label">角色</label>
+              <select className="form-select" value={registerRole} onChange={e => setRegisterRole(e.target.value)}>
+                <option value="viewer">查看者（只读）</option>
+                <option value="purchaser">采购员（录入数据）</option>
+                <option value="manager">经理（审批+管理）</option>
+                <option value="admin">管理员（全部权限）</option>
+              </select>
             </div>
           )}
           <div className="form-group">

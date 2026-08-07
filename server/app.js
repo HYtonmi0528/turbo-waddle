@@ -119,8 +119,9 @@ function createApp() {
   }));
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
-    const { username, displayName, password } = req.body || {};
+    const { username, displayName, password, role } = req.body || {};
     if (!username || !displayName) return res.status(400).json({ message: '请输入账号和姓名' });
+    const safeRole = ['admin', 'manager', 'purchaser', 'viewer'].includes(role) ? role : 'viewer';
     const passwordData = await hashPassword(password);
     const id = uuid();
     const timestamp = now();
@@ -128,8 +129,8 @@ function createApp() {
       await getPool().execute(
         `INSERT INTO users
          (id, username, display_name, password_hash, password_salt, role, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'viewer', 'pending', ?, ?)`,
-        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, timestamp, timestamp]
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, 'pending', timestamp, timestamp]
       );
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: '该账号已经存在' });

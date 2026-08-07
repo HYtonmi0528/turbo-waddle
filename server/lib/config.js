@@ -28,6 +28,11 @@ function loadConfig() {
   config.server.port = Number(config.server.port || 3210);
   config.mysql.port = Number(config.mysql.port || 3306);
   config.storageDir = path.resolve(config.storageDir || path.join(dataDir, 'files'));
+  if (!config.sessionSecret || config.sessionSecret.length < 16) {
+    const crypto = require('crypto');
+    config.sessionSecret = crypto.randomBytes(32).toString('hex');
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 4), 'utf8');
+  }
   fs.mkdirSync(config.storageDir, { recursive: true });
   return config;
 }
