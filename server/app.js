@@ -870,7 +870,7 @@ function createApp() {
     res.status(201).json({ id, content, userName: req.user.displayName, createdAt: now().toISOString() });
   }));
 
-  app.get('/api/db/tables', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.get('/api/db/tables', authenticate, asyncRoute(async (req, res) => {
     const [tables] = await getPool().query(
       `SELECT TABLE_NAME AS name, TABLE_ROWS AS rowCount
        FROM information_schema.TABLES
@@ -879,7 +879,7 @@ function createApp() {
     );
     res.json(tables.map(t => ({ name: t.name, rowCount: Number(t.rowCount || 0) })));
   }));
-  app.get('/api/db/table/:name', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.get('/api/db/table/:name', authenticate, asyncRoute(async (req, res) => {
     const page = parseInt(req.query.page) || 0;
     const pageSize = Math.min(parseInt(req.query.pageSize) || 100, 1000);
     const [columns] = await getPool().query(
@@ -895,7 +895,7 @@ function createApp() {
     );
     res.json({ columns: colNames, rows, total: Number(count) });
   }));
-  app.post('/api/db/query', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.post('/api/db/query', authenticate, asyncRoute(async (req, res) => {
     const sql = (req.body.query || '').trim();
     if (!/^\s*SELECT/i.test(sql)) return res.status(400).json({ message: '仅支持 SELECT 查询' });
     const [rows] = await getPool().query(sql);

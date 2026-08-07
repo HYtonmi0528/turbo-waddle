@@ -19,8 +19,10 @@ export default function DatabaseBrowser() {
   const pageSize = 100;
 
   const loadTables = useCallback(async () => {
-    const result = await window.electronAPI.database.getTables();
-    setTables(result || []);
+    try {
+      const result = await window.electronAPI.database.getTables();
+      setTables(result || []);
+    } catch (_) { setTables([]); setError('无法加载数据库表，请确认服务已启动'); }
   }, []);
 
   useEffect(() => { loadTables(); }, [loadTables]);
