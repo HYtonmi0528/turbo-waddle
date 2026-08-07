@@ -232,6 +232,7 @@ export default function CollaborationShell() {
   const [notifications, setNotifications] = useState([]);
   const [appVersion, setAppVersion] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState(null);
   const knownNotificationIds = useRef(new Set());
   const firstNotificationLoad = useRef(true);
 
@@ -322,12 +323,43 @@ export default function CollaborationShell() {
   }
 
   const unreadCount = notifications.filter(item => !item.isRead).length;
+
+  const handleSearch = async (val) => {
+    setSearchQuery(val);
+    if (val.trim().length >= 2) {
+      try {
+        const r = await window.electronAPI.collaboration.search(val.trim());
+        setSearchResults(r);
+      } catch (_) { setSearchResults(null); }
+    } else { setSearchResults(null); }
+  };
+
+  const clearSearch = () => { setSearchQuery(''); setSearchResults(null); };
+
   return (
     <div className="collab-shell">
       <header className="collab-shell-header">
         <div className="collab-brand"><img src={appLogo} alt="" /><div><strong>LATIC询价协作系统</strong><span>局域网内测版</span></div></div>
         <div className="collab-search-bar">
-          <input className="form-input collab-search-input" placeholder="搜索任务/产品/供应商…" value={searchQuery} onChange={e => { setSearchQuery(e.target.value); if (e.target.value) setActiveArea('tasks'); }} />
+          <input className="form-input collab-search-input" placeholder="搜索任务/产品/供应商…" value={searchQuery} onChange={e => handleSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Escape') clearSearch(); }} />
+          {searchResults && (searchResults.tasks?.length > 0 || searchResults.items?.length > 0) && (
+            <div className="collab-search-dropdown">
+              {searchResults.tasks?.slice(0, 5).map(t => (
+                <button key={'t'+t.id} onClick={() => { clearSearch(); setActiveArea('tasks'); }}>
+                  <span className={`collab-status status-${t.status}`}>{t.status === 'published' ? '已下发' : t.status === 'in_progress' ? '进行中' : t.status === 'review' ? '待审核' : t.status}</span>
+                  <strong>{t.title}</strong>
+                  <span className="text-muted">{t.taskNo}</span>
+                </button>
+              ))}
+              {searchResults.items?.slice(0, 5).map(i => (
+                <button key={'ii'+i.id} onClick={() => { clearSearch(); setActiveArea('tasks'); }}>
+                  <span>#{i.lineNo}</span>
+                  <strong>{i.description}</strong>
+                  <span className="text-muted">{i.taskNo}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <div className="collab-user-actions">
           <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
