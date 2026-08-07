@@ -778,6 +778,7 @@ function createApp() {
       throw e;
     }
   }));
+  app.post('/api/excel/generate', authenticate, asyncRoute(async (req, res) => {
     const { templateId, batches, options } = req.body || {};
     if (!templateId) return res.status(400).json({ message: '请先选择模板' });
     const outputPath = await generateExcel(templateId, batches, options);
