@@ -4,6 +4,7 @@ import CollaborationWorkspace from './CollaborationWorkspace';
 import AccountAdmin from './AccountAdmin';
 import RemoteTemplates from './RemoteTemplates';
 import DatabaseBrowser from './DatabaseBrowser';
+import Dashboard from './Dashboard';
 import appLogo from '../../../assets/app-logo.png';
 
 function cleanError(error) {
@@ -215,9 +216,10 @@ export default function CollaborationShell() {
   const [phase, setPhase] = useState('loading');
   const [connection, setConnection] = useState({ serverUrl: '', setup: null });
   const [user, setUser] = useState(null);
-  const [activeArea, setActiveArea] = useState('tasks');
+  const [activeArea, setActiveArea] = useState('dashboard');
   const [notifications, setNotifications] = useState([]);
   const [appVersion, setAppVersion] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
   const knownNotificationIds = useRef(new Set());
   const firstNotificationLoad = useRef(true);
 
@@ -274,6 +276,18 @@ export default function CollaborationShell() {
     return () => clearInterval(timer);
   }, [user, loadNotifications]);
 
+  useEffect(() => {
+    const handler = e => {
+      if (e.ctrlKey && e.key === '1') { e.preventDefault(); setActiveArea('dashboard'); }
+      if (e.ctrlKey && e.key === '2') { e.preventDefault(); setActiveArea('tasks'); }
+      if (e.ctrlKey && e.key === '3') { e.preventDefault(); setActiveArea('templates'); }
+      if (e.ctrlKey && e.key === '4') { e.preventDefault(); setActiveArea('legacy'); }
+      if (e.key === 'Escape' && activeArea !== 'dashboard') { e.preventDefault(); setActiveArea('dashboard'); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeArea]);
+
   const logout = async () => {
     await window.electronAPI.collaboration.logout();
     setUser(null);
@@ -300,6 +314,9 @@ export default function CollaborationShell() {
     <div className="collab-shell">
       <header className="collab-shell-header">
         <div className="collab-brand"><img src={appLogo} alt="" /><div><strong>LATIC询价协作系统</strong><span>局域网内测版</span></div></div>
+        <div className="collab-search-bar">
+          <input className="form-input collab-search-input" placeholder="搜索任务/产品/供应商…" value={searchQuery} onChange={e => { setSearchQuery(e.target.value); if (e.target.value) setActiveArea('tasks'); }} />
+        </div>
         <div className="collab-user-actions">
           <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
           <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : user.role === 'manager' ? '经理' : user.role === 'purchaser' ? '采购员' : '查看者'}</span></div>
@@ -307,6 +324,7 @@ export default function CollaborationShell() {
         </div>
       </header>
       <nav className="collab-main-nav">
+        <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>工作台</button>
         <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>共享询价任务</button>
         <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>我的账号模板</button>
         <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>Excel工具</button>
@@ -314,7 +332,8 @@ export default function CollaborationShell() {
         <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>数据库</button>
       </nav>
       <main className={`collab-shell-main ${activeArea === 'legacy' ? 'legacy-mode' : ''}`}>
-        {activeArea === 'tasks' && <CollaborationWorkspace user={user} onNotificationsChanged={loadNotifications} onOpenExcelTool={() => setActiveArea('legacy')} />}
+        {activeArea === 'dashboard' && <Dashboard onNavigate={setActiveArea} />}
+        {activeArea === 'tasks' && <CollaborationWorkspace user={user} onNotificationsChanged={loadNotifications} onOpenExcelTool={() => setActiveArea('legacy')} searchQuery={searchQuery} />}
         {activeArea === 'templates' && <RemoteTemplates user={user} />}
         {activeArea === 'legacy' && <App />}
         {activeArea === 'users' && user.role === 'admin' && <AccountAdmin />}

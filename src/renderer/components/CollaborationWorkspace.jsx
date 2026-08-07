@@ -108,14 +108,29 @@ function ImportTaskModal({ users, onClose, onImported }) {
   );
 }
 
-function TaskList({ tasks, users, user, onSelect, onRefresh }) {
+function TaskList({ tasks, users, user, onSelect, onRefresh, searchQuery, batchMode, selectedIds, onToggleSelect }) {
   const [filter, setFilter] = useState('active');
   const visible = tasks.filter(task => {
-    if (filter === 'all') return true;
-    if (filter === 'mine') return (task.assignedUserIds || []).includes(user.id);
-    if (filter === 'review') return task.status === 'review';
-    return !['completed'].includes(task.status);
+    let match = true;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      match = (task.title || '').toLowerCase().includes(q)
+        || (task.taskNo || '').toLowerCase().includes(q)
+        || (task.requester || '').toLowerCase().includes(q)
+        || (task.country || '').toLowerCase().includes(q);
+    }
+    if (filter === 'all') return match;
+    if (filter === 'mine') return match && (task.assignedUserIds || []).includes(user.id);
+    if (filter === 'review') return match && task.status === 'review';
+    return match && !['completed'].includes(task.status);
   });
+  const deadlineClass = task => {
+    if (!task.deadline || task.status === 'completed') return '';
+    const d = new Date(task.deadline);
+    if (d < new Date()) return 'deadline-late';
+    if (d < new Date(Date.now() + 86400000)) return 'deadline-soon';
+    return '';
+  };
   const userNames = ids => (ids || []).map(id => users.find(userItem => userItem.id === id)?.displayName).filter(Boolean).join('、') || '所有员工';
   return (
     <>
@@ -132,16 +147,25 @@ function TaskList({ tasks, users, user, onSelect, onRefresh }) {
       {visible.length === 0 ? <div className="card empty-state"><div className="empty-state-icon">📋</div><div className="empty-state-text">当前没有符合条件的询价任务</div></div> : (
         <div className="collab-task-grid">{visible.map(task => {
           const percent = task.itemCount ? Math.round(task.completedCount / task.itemCount * 100) : 0;
+          const dc = deadlineClass(task);
           return (
-            <button className="collab-task-card" key={task.id} onClick={() => onSelect(task.id)}>
+            <div key={task.id} className={`collab-task-card-wrap ${dc}`}>
+              {batchMode && <input type="checkbox" className="collab-batch-check" checked={selectedIds.has(task.id)} onChange={() => onToggleSelect(task.id)} />}
+              <button className="collab-task-card" onClick={() => { if (!batchMode) onSelect(task.id); }}>
               <div className="collab-task-card-head"><span className={`collab-status status-${task.status}`}>{STATUS_LABELS[task.status] || task.status}</span><span>{task.taskNo}</span></div>
               <strong>{task.title}</strong>
-              <div className="collab-task-meta"><span>国家：{task.country || '未填写'}</span><span>请求人：{task.requester || '未填写'}</span><span>客户：{task.clientName || '未填写'}</span><span>截止：{formatDate(task.deadline, true)}</span></div>
+              <div className="collab-task-meta"><span>国家：{task.country || '未填写'}</span><span>请求人：{task.requester || '未填写'}</span><span>客户：{task.clientName || '未填写'}</span><span className={dc ? 'deadline-highlight' : ''}>截止：{formatDate(task.deadline, true)}</span></div>
               <div className="collab-progress"><span style={{ width: `${percent}%` }} /></div>
               <div className="collab-task-footer"><span>已填写 {task.completedCount}/{task.itemCount}</span><span>负责人：{userNames(task.assignedUserIds)}</span></div>
-            </button>
+            </button></div>
           );
         })}</div>
+      )}
+      {batchMode && (
+        <div className="collab-batch-bar">
+          <span>{selectedIds.size} 项已选</span>
+          <button className="btn btn-outline btn-sm" onClick={() => { setBatchMode(false); selectedIds.clear(); }}>取消</button>
+        </div>
       )}
     </>
   );
@@ -354,7 +378,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
   );
 }
 
-export default function CollaborationWorkspace({ user, onNotificationsChanged, onOpenExcelTool }) {
+export default function CollaborationWorkspace({ user, onNotificationsChanged, onOpenExcelTool, searchQuery }) {
   const [tasks, setTasks] = useState([]);
   const [users, setUsers] = useState([]);
   const [selectedTaskId, setSelectedTaskId] = useState('');
@@ -363,6 +387,8 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState(null);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [batchMode, setBatchMode] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -397,7 +423,12 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
       )}
       {message && <div className="collab-form-success">{message}</div>}
       {error && <div className="collab-form-error">{error}</div>}
-      {loading ? <div className="collab-loading">正在读取共享任务…</div> : <TaskList tasks={tasks} users={users} user={user} onSelect={setSelectedTaskId} onRefresh={load} />}
+      {loading ? <div className="collab-loading">正在读取共享任务…</div> : <TaskList tasks={tasks} users={users} user={user} onSelect={setSelectedTaskId} onRefresh={load} searchQuery={searchQuery} batchMode={batchMode} selectedIds={selectedIds} onToggleSelect={id => { const s = new Set(selectedIds); if (s.has(id)) s.delete(id); else s.add(id); setSelectedIds(s); }} />}
+      {user.role === 'admin' && !loading && (
+        <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+          <button className="btn btn-outline btn-sm" onClick={() => { setBatchMode(!batchMode); setSelectedIds(new Set()); }}>{batchMode ? '退出批量' : '批量操作'}</button>
+        </div>
+      )}
       {showImport && <ImportTaskModal users={users} onClose={() => setShowImport(false)} onImported={async result => { setShowImport(false); setMessage(`任务“${result.title}”已下发，共${result.itemCount}项产品。`); await load(); onNotificationsChanged(); }} />}
     </div>
   );
