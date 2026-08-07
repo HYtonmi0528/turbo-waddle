@@ -1679,3 +1679,26 @@ body {
 .collab-batch-check { position: absolute; top: 10px; right: 10px; z-index: 2; width: 20px; height: 20px; accent-color: var(--primary); cursor: pointer; }
 .collab-batch-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; margin-top: 12px; border-radius: 8px; background: #e8edf5; font-size: 13px; }
 .deadline-highlight { color: #E74C3C; font-weight: 600; }
+
+.collab-comments-list { max-height: 400px; overflow-y: auto; }
+.collab-comment { padding: 10px 0; border-bottom: 1px solid #f0f2f5; }
+.collab-comment strong { display: block; font-size: 13px; color: var(--primary); }
+.collab-comment span { display: block; margin-top: 3px; font-size: 13px; line-height: 1.5; }
+.collab-comment time { display: block; margin-top: 3px; font-size: 11px; color: var(--text-secondary); }
+.collab-comment-input { display: flex; gap: 8px; padding-top: 12px; }
+.collab-comment-input .form-input { flex: 1; }
+
+@media (max-width: 900px) {
+  .collab-shell-header { padding: 0 10px; gap: 8px; }
+  .collab-search-bar { max-width: 160px; }
+  .collab-brand strong { font-size: 13px; }
+  .collab-brand span { display: none; }
+  .collab-main-nav { padding: 0 8px; gap: 0; }
+  .collab-main-nav button { padding: 0 8px; font-size: 12px; }
+  .collab-task-grid { grid-template-columns: 1fr; }
+  .dashboard-stats-grid { grid-template-columns: repeat(2, 1fr); }
+  .dashboard-row { grid-template-columns: 1fr; }
+  .db-browser { flex-direction: column; }
+  .db-sidebar { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }
+  .collab-summary-grid { grid-template-columns: 1fr 1fr; }
+}

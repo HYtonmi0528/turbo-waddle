@@ -217,3 +217,14 @@ CREATE TABLE IF NOT EXISTS quote_items (
   CONSTRAINT fk_qitems_set FOREIGN KEY (quote_set_id) REFERENCES quote_sets(id) ON DELETE CASCADE,
   INDEX idx_qitems_set (quote_set_id, item_index)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS task_comments (
+  id CHAR(36) PRIMARY KEY,
+  task_id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  content TEXT NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  CONSTRAINT fk_comments_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE CASCADE,
+  CONSTRAINT fk_comments_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  INDEX idx_comments_task (task_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

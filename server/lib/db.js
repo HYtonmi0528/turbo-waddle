@@ -81,6 +81,14 @@ async function ensureServerSchema() {
       INDEX idx_qitems_set (quote_set_id, item_index)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
   } catch (_) {}
+
+  try {
+    await getPool().query(`CREATE TABLE IF NOT EXISTS task_comments (
+      id CHAR(36) PRIMARY KEY, task_id CHAR(36) NOT NULL, user_id CHAR(36) NOT NULL,
+      content TEXT NOT NULL, created_at DATETIME(3) NOT NULL,
+      INDEX idx_comments_task (task_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch (_) {}
 }
 
 module.exports = { getPool, withTransaction, ensureServerSchema };

@@ -185,6 +185,8 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
   const [invoiceType, setInvoiceType] = useState('special');
   const [selectingItemId, setSelectingItemId] = useState('');
   const [previewImage, setPreviewImage] = useState(null);
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState('');
 
   const load = async () => {
     setError('');
@@ -216,6 +218,11 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
         setInvoiceType(next[0].options?.invoiceType === 'regular' ? 'regular' : 'special');
       }
     }).catch(() => setQuoteSets([]));
+    const keyHandler = e => {
+      if (e.ctrlKey && e.key === 's') { e.preventDefault(); const dirty = items.find(i => i.dirty); if (dirty) saveItem(dirty); }
+    };
+    window.addEventListener('keydown', keyHandler);
+    return () => window.removeEventListener('keydown', keyHandler);
   }, [taskId]);
   useEffect(() => { if (tab === 'history') loadAudit(); }, [tab]);
 
@@ -329,6 +336,18 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
   const downloadCsv = async () => {
     await window.electronAPI.collaboration.exportTaskCsv(task.id);
   };
+  const loadComments = async () => {
+    try {
+      const r = await window.electronAPI.collaboration.listTaskComments(task.id);
+      setComments(r.comments || []);
+    } catch (_) { setComments([]); }
+  };
+  const addComment = async () => {
+    if (!commentText.trim()) return;
+    const r = await window.electronAPI.collaboration.addTaskComment(task.id, commentText.trim());
+    setComments(c => [...c, r]);
+    setCommentText('');
+  };
   const exportCompleted = async () => {
     if (items.some(item => item.dirty)) { setError('还有未保存的修改，请先保存对应行再导出'); return; }
     setError('');
@@ -346,7 +365,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
         <div className="card-header"><div><div className="text-sm text-muted">{task.taskNo}</div><h1>{task.title}</h1></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={() => window.electronAPI.collaboration.downloadTaskSource(task)}>下载原始询价单</button><button className="btn btn-outline" onClick={downloadCsv}>导出CSV</button>{user.role === 'admin' && <button className="btn btn-primary" onClick={exportCompleted}>导出已填写询价单</button>}</div></div>
         <div className="collab-summary-grid"><div><span>请求人</span><strong>{task.requester || '未填写'}</strong></div><div><span>国家</span><strong>{task.country || '未填写'}</strong></div><div><span>客户</span><strong>{task.clientName || '未填写'}</strong></div><div><span>申请日期</span><strong>{formatDate(task.requestDate)}</strong></div><div><span>进口方式</span><strong>{task.importType || '未填写'}</strong></div><div><span>交付方式</span><strong>{task.deliveryType || '未填写'}</strong></div><div><span>付款方式</span><strong>{task.paymentType || '未填写'}</strong></div><div><span>截止时间</span><strong>{formatDate(task.deadline, true)}</strong></div></div>
       </section>
-      <div className="collab-detail-tabs"><button className={tab === 'entry' ? 'active' : ''} onClick={() => setTab('entry')}>询价填写</button><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>修改记录</button></div>
+      <div className="collab-detail-tabs"><button className={tab === 'entry' ? 'active' : ''} onClick={() => setTab('entry')}>询价填写</button><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>修改记录</button><button className={tab === 'comments' ? 'active' : ''} onClick={() => { setTab('comments'); loadComments(); }}>讨论</button></div>
       {message && <div className="collab-form-success">{message}</div>}
       {error && <div className="collab-form-error">{error}</div>}
       {tab === 'entry' ? (
@@ -371,7 +390,18 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
           <div className="collab-review-actions"><span>提交后仍可继续修改；正式提交会保留不可覆盖的历史快照。</span>{user.role === 'admin' ? <button className="btn btn-success btn-lg" onClick={snapshot}>审核通过并保存提交快照</button> : <button className="btn btn-success btn-lg" onClick={submitReview}>提交负责人审核</button>}</div>
         </section>
       ) : (
-        <section className="card"><div className="card-header"><h2 className="card-title">修改记录</h2><button className="btn btn-outline" onClick={loadAudit}>刷新</button></div>{audit.length === 0 ? <div className="empty-state"><div className="empty-state-text">暂无修改记录</div></div> : <div className="collab-audit-list">{audit.map(record => <div key={record.id}><time>{formatDate(record.createdAt, true)}</time><strong>{record.userName || '系统'}</strong><span>{record.action === 'update' ? '修改了询价数据' : '导入了询价任务'}</span></div>)}</div>}</section>
+        tab === 'history' && <section className="card"><div className="card-header"><h2 className="card-title">修改记录</h2><button className="btn btn-outline" onClick={loadAudit}>刷新</button></div>{audit.length === 0 ? <div className="empty-state"><div className="empty-state-text">暂无修改记录</div></div> : <div className="collab-audit-list">{audit.map(record => <div key={record.id}><time>{formatDate(record.createdAt, true)}</time><strong>{record.userName || '系统'}</strong><span>{record.action === 'update' ? '修改了询价数据' : '导入了询价任务'}</span></div>)}</div>}</section>
+      )}
+      {tab === 'comments' && (
+          <section className="card">
+            <div className="card-header"><h2 className="card-title">任务讨论</h2></div>
+            {comments.length === 0 ? <div className="empty-state"><div className="empty-state-text">暂无讨论，开始第一条评论</div></div> : <div className="collab-comments-list">{comments.map(c => <div key={c.id} className="collab-comment"><strong>{c.userName}</strong><span>{c.content}</span><time>{formatDate(c.createdAt, true)}</time></div>)}</div>}
+            <div className="collab-comment-input">
+              <input className="form-input" placeholder="输入评论…" value={commentText} onChange={e => setCommentText(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && commentText.trim()) { addComment(); } }} />
+              <button className="btn btn-primary btn-sm" onClick={addComment} disabled={!commentText.trim()}>发送</button>
+            </div>
+          </section>
+        )}
       )}
       {previewImage && <div className="modal-overlay" onClick={() => setPreviewImage(null)}><div className="collab-image-preview" onClick={e => e.stopPropagation()}><button className="release-notes-close" onClick={() => setPreviewImage(null)}>×</button><img src={previewImage} alt="预览" style={{maxWidth:'90vw',maxHeight:'85vh',borderRadius:8}} /></div></div>}
     </div>

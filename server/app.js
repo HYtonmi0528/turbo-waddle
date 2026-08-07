@@ -850,6 +850,26 @@ function createApp() {
     res.json(await getToday(req.query.force === '1'));
   }));
 
+  app.get('/api/tasks/:id/comments', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().execute(
+      `SELECT c.id, c.content, c.created_at AS createdAt, u.display_name AS userName
+       FROM task_comments c JOIN users u ON u.id = c.user_id
+       WHERE c.task_id = ? ORDER BY c.created_at ASC`,
+      [req.params.id]
+    );
+    res.json({ comments: rows });
+  }));
+  app.post('/api/tasks/:id/comments', authenticate, asyncRoute(async (req, res) => {
+    const content = (req.body.content || '').trim();
+    if (!content) return res.status(400).json({ message: '评论不能为空' });
+    const id = uuid();
+    await getPool().execute(
+      'INSERT INTO task_comments (id, task_id, user_id, content, created_at) VALUES (?,?,?,?,?)',
+      [id, req.params.id, req.user.id, content, now()]
+    );
+    res.status(201).json({ id, content, userName: req.user.displayName, createdAt: now().toISOString() });
+  }));
+
   app.get('/api/db/tables', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const [tables] = await getPool().query(
       `SELECT TABLE_NAME AS name, TABLE_ROWS AS rowCount
