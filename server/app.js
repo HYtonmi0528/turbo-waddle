@@ -702,7 +702,51 @@ function createApp() {
     );
     res.json({ id, name, fields, structure });
   }));
-  app.post('/api/excel/generate', authenticate, asyncRoute(async (req, res) => {
+  app.post('/api/excel/open-existing', authenticate, upload.single('file'), asyncRoute(async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: '请选择Excel文件' });
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    try {
+      await workbook.xlsx.readFile(req.file.path);
+      const sheet = workbook.getWorksheet(1);
+      if (!sheet) return res.status(400).json({ message: '文件中没有找到工作表' });
+      const batches = [];
+      let currentCategory = '';
+      let currentItems = [];
+      let templateId = req.body.templateId || null;
+      let detectedHeaderRow = 1;
+      // 查找表头行和隐藏元数据
+      for (let r = 1; r <= Math.min(50, sheet.rowCount); r++) {
+        const row = sheet.getRow(r);
+        const firstVal = String(row.getCell(1).value || '').trim();
+        if (firstVal.startsWith('{{') && firstVal.endsWith('}}')) {
+          detectedHeaderRow = r;
+          break;
+        }
+      }
+      for (let r = detectedHeaderRow + 1; r <= sheet.rowCount; r++) {
+        const row = sheet.getRow(r);
+        const firstVal = String(row.getCell(1).value || '').trim();
+        if (firstVal && !row.getCell(2).value && row.getCell(1).font && row.getCell(1).font.bold) {
+          if (currentItems.length) { batches.push({ category: currentCategory, items: currentItems }); }
+          currentCategory = firstVal;
+          currentItems = [];
+        } else if (firstVal || row.getCell(2).value) {
+          const item = {};
+          row.eachCell({ includeEmpty: false }, (cell, colNum) => {
+            item[`col_${colNum}`] = cell.value;
+          });
+          currentItems.push(item);
+        }
+      }
+      if (currentItems.length) batches.push({ category: currentCategory, items: currentItems });
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+      res.json({ success: true, templateId: templateId || null, batches: batches.length ? batches : [{ category: '', items: [] }] });
+    } catch (e) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+      throw e;
+    }
+  }));
     const { templateId, batches, options } = req.body || {};
     if (!templateId) return res.status(400).json({ message: '请先选择模板' });
     const outputPath = await generateExcel(templateId, batches, options);
