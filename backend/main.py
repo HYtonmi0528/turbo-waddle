@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api import auth, tasks, users
+from api import auth, tasks, users, templates, data
 
 app = FastAPI(title="LATIC询价协作系统", version="2.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -8,6 +8,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, 
 app.include_router(auth.router)
 app.include_router(tasks.router)
 app.include_router(users.router)
+app.include_router(templates.router)
+app.include_router(data.router)
 
 @app.get("/api/health")
 async def health():
