@@ -96,6 +96,20 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+# Serve frontend static files in production
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.exists(frontend_dir):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str = ""):
+        index_path = os.path.join(frontend_dir, "index.html")
+        if os.path.exists(index_path):
+            return FileResponse(index_path)
+    @app.get("/")
+    async def serve_root():
+        return FileResponse(os.path.join(frontend_dir, "index.html"))
+
 @app.get("/api/excel/generate")
 async def excel_generate(templateId: str = ""):
     return {"detail": "请使用POST请求"}
