@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from api import auth, tasks, users, templates, data
 from dependencies import get_current_user
-from models import User, UserTemplate, RfqTask, Notification
+from models import User, UserTemplate, RfqTask, Notification, DataEntry, DataDraft
 from sqlalchemy import select, update
 import os
 
@@ -101,14 +101,12 @@ async def excel_generate(templateId: str = ""):
     return {"detail": "请使用POST请求"}
 @app.post("/api/excel/generate")
 async def excel_generate_post(body: dict, user=Depends(get_current_user)):
-    import openpyxl, tempfile, io, os
+    import openpyxl, io, uuid, datetime
     from fastapi.responses import StreamingResponse
     from database import AsyncSessionLocal
-    from models import UserTemplate
     tid = body.get("templateId")
     if not tid: raise HTTPException(400, "请选择模板")
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
         tpl = (await db.execute(select(UserTemplate).where(UserTemplate.id == tid))).scalar_one_or_none()
         if not tpl or not tpl.storage_path or not os.path.exists(tpl.storage_path):
             raise HTTPException(400, "模板文件不存在")
@@ -127,8 +125,20 @@ async def excel_generate_post(body: dict, user=Depends(get_current_user)):
                 row_num += 1
         output = io.BytesIO()
         wb.save(output); output.seek(0)
+
+        # Record generation history
+        storage_dir = os.path.join(config.get("storageDir", "./server-data/files"), "generated")
+        os.makedirs(storage_dir, exist_ok=True)
+        out_path = os.path.join(storage_dir, f"{uuid.uuid4()}.xlsx")
+        with open(out_path, "wb") as f: f.write(output.getvalue())
+        output.seek(0)
+
+        entry = DataEntry(id=str(uuid.uuid4()), user_id=user.id, type="excel_generated",
+                         data={"templateName": tpl.name, "rows": row_num - hr, "filePath": out_path, "generatedAt": datetime.datetime.utcnow().isoformat()})
+        db.add(entry); await db.commit()
+
         return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                 headers={"Content-Disposition": f"attachment;filename=generated.xlsx"})
+                                 headers={"Content-Disposition": f"attachment;filename=generated_{datetime.date.today()}.xlsx"})
 
 @app.get("/api/fields")
 async def list_fields(user=Depends(get_current_user)):
