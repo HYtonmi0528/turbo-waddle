@@ -1,27 +1,31 @@
 <template>
   <div>
-    <h2 style="margin-bottom:20px">工作台</h2>
-    <div class="dashboard-cards">
-      <div class="stat-card" v-for="c in cards" @click="$router.push(c.to)">
-        <div class="count">{{ c.count }}</div>
-        <div class="label">{{ c.label }}</div>
+    <h2 style="margin-bottom:24px;font-size:22px;font-weight:700">工作台</h2>
+    <div class="card-stats">
+      <div class="stat-card" v-for="c in cards" :key="c.label" @click="$router.push(c.to)">
+        <div class="stat-icon" :style="{background:c.bg+'20',color:c.bg}">{{ c.icon }}</div>
+        <div class="stat-count" :style="{color:c.bg}">{{ c.count }}</div>
+        <div class="stat-label">{{ c.label }}</div>
       </div>
     </div>
     <el-row :gutter="16">
       <el-col :span="12">
-        <el-card header="整体填写进度">
-          <el-progress :percentage="fillPct" :stroke-width="12"/>
-          <div style="margin-top:8px;color:#7f8c8d;font-size:13px">{{ filledItems }}/{{ totalItems }} 项已填写</div>
+        <el-card header="整体填写进度" shadow="never">
+          <div style="display:flex;align-items:center;gap:16px">
+            <div style="flex:1"><el-progress :percentage="fillPct" :stroke-width="14" color="var(--brand)"/></div>
+            <span style="font-size:24px;font-weight:700;color:var(--brand)">{{ fillPct }}%</span>
+          </div>
+          <div style="margin-top:8px;color:var(--text-secondary);font-size:13px">{{ filledItems }}/{{ totalItems }} 项已填写</div>
         </el-card>
       </el-col>
       <el-col :span="12">
-        <el-card header="最近任务">
-          <div v-for="t in recentTasks" :key="t.id" style="padding:8px 0;border-bottom:1px solid #f0f0f0;cursor:pointer" @click="$router.push('/tasks/'+t.id)">
-            <el-tag :type="statusType(t.status)" size="small">{{ statusLabel(t.status) }}</el-tag>
-            <strong style="margin-left:8px">{{ t.title }}</strong>
-            <span v-if="t.deadline" :class="deadlineClass(t.deadline)" style="float:right;font-size:12px">{{ new Date(t.deadline).toLocaleDateString() }}</span>
+        <el-card header="最近任务" shadow="never">
+          <div v-for="t in recentTasks" :key="t.id" style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer" @click="$router.push('/tasks/'+t.id)">
+            <el-tag :type="t.status==='review'?'warning':t.status==='completed'?'success':t.status==='published'?'info':''" size="small">{{ statusLabel(t.status) }}</el-tag>
+            <span style="flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ t.title }}</span>
+            <span v-if="t.deadline" :style="{fontSize:'11px',color:new Date(t.deadline)<new Date()?'var(--danger)':new Date(t.deadline)<new Date(Date.now()+86400000)?'var(--warning)':'var(--text-secondary)'}">{{ new Date(t.deadline).toLocaleDateString() }}</span>
           </div>
-          <div v-if="recentTasks.length===0" style="text-align:center;color:#999;padding:20px">暂无进行中的任务</div>
+          <div v-if="recentTasks.length===0" style="text-align:center;color:var(--text-secondary);padding:30px">暂无进行中的任务</div>
         </el-card>
       </el-col>
     </el-row>
@@ -38,21 +42,14 @@ const recentTasks = computed(() => tasks.value.filter(t=>t.status!=='completed')
 const cards = computed(() => {
   const t = tasks.value
   return [
-    { label:'进行中', count: t.filter(i=>['published','in_progress'].includes(i.status)).length, to:'/tasks' },
-    { label:'待审核', count: t.filter(i=>i.status==='review').length, to:'/tasks' },
-    { label:'已完成', count: t.filter(i=>i.status==='completed').length, to:'/tasks' },
-    { label:'近期待办', count: t.filter(i=>i.deadline&&new Date(i.deadline)<new Date(Date.now()+86400000)&&i.status!=='completed').length, to:'/tasks' },
+    { label:'进行中', count:t.filter(i=>['published','in_progress'].includes(i.status)).length, to:'/tasks', bg:'#3b6cb4', icon:'📋' },
+    { label:'待审核', count:t.filter(i=>i.status==='review').length, to:'/tasks', bg:'#f39c12', icon:'⏳' },
+    { label:'已完成', count:t.filter(i=>i.status==='completed').length, to:'/tasks', bg:'#27ae60', icon:'✅' },
+    { label:'临期待办', count:t.filter(i=>i.deadline&&new Date(i.deadline)<new Date(Date.now()+86400000)&&i.status!=='completed').length, to:'/tasks', bg:'#e74c3c', icon:'🔥' },
   ]
 })
 function statusLabel(s){ return {published:'已下发',in_progress:'进行中',review:'待审核',completed:'已完成'}[s]||s }
-function statusType(s){ return {published:'info',in_progress:'',review:'warning',completed:'success'}[s]||'' }
-function deadlineClass(d){ const dt=new Date(d); if(dt<new Date())return 'task-deadline-late'; if(dt<new Date(Date.now()+86400000))return 'task-deadline-soon'; return '' }
 onMounted(async ()=>{
-  try {
-    const [tr,sr] = await Promise.all([axios.get('/api/tasks'), axios.get('/api/tasks/stats')])
-    tasks.value = tr.data.tasks || []
-    totalItems.value = sr.data.totalItems
-    filledItems.value = sr.data.filledItems
-  } catch(_){}
+  try { const [tr,sr]=await Promise.all([axios.get('/api/tasks'),axios.get('/api/tasks/stats')]); tasks.value=tr.data.tasks||[]; totalItems.value=sr.data.totalItems; filledItems.value=sr.data.filledItems } catch(_){}
 })
 </script>

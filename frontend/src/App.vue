@@ -17,7 +17,7 @@
     </el-aside>
     <el-container>
       <header class="shell-header">
-        <div class="header-brand">LATIC v2.1</div>
+        <div class="header-brand"><img src="/logo.png" />LATIC 询价协作</div>
         <div class="header-search" style="position:relative">
           <el-input v-model="search" placeholder="搜索任务/产品/供应商…" size="small" clearable @clear="search='';searchResults=null" @input="doSearch">
             <template #prefix><el-icon><Search /></el-icon></template>
