@@ -130,6 +130,35 @@ async def excel_generate_post(body: dict, user=Depends(get_current_user)):
         return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                  headers={"Content-Disposition": f"attachment;filename=generated.xlsx"})
 
+@app.get("/api/fields")
+async def list_fields(user=Depends(get_current_user)):
+    from database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import text
+        try:
+            result = await db.execute(text("SELECT field_key, label, category, data_type FROM custom_system_fields ORDER BY label"))
+            return {"fields": [{"key": r[0], "label": r[1], "category": r[2], "dataType": r[3]} for r in result.all()]}
+        except: return {"fields": []}
+
+@app.post("/api/fields")
+async def add_field(body: dict, user=Depends(get_current_user)):
+    from database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import text
+        await db.execute(text("INSERT INTO custom_system_fields (field_key, label, category, data_type, created_by, created_at) VALUES (:k,:l,:c,:d,:u,NOW()) ON DUPLICATE KEY UPDATE label=VALUES(label)"),
+                         {"k": body["key"], "l": body["label"], "c": body.get("category","自定义"), "d": body.get("dataType","text"), "u": user.id})
+        await db.commit()
+    return {"ok": True}
+
+@app.delete("/api/fields/{key}")
+async def del_field(key: str):
+    from database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import text
+        await db.execute(text("DELETE FROM custom_system_fields WHERE field_key=:k"), {"k": key})
+        await db.commit()
+    return {"ok": True}
+
 @app.get("/api/db/tables")
 async def db_tables(user=Depends(get_current_user)):
     from database import AsyncSessionLocal

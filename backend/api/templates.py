@@ -15,8 +15,8 @@ async def list_templates(user=Depends(get_current_user), db: AsyncSession = Depe
     )
     templates = [{
         "id": t.id, "name": t.name, "type": t.type, "description": t.description,
-        "originalName": t.original_name, "structure": t.structure_json,
-        "mappings": t.mappings_json, "isShared": t.is_shared,
+        "originalName": t.original_name, "structure": t.structure_json or {},
+        "mappings": t.mappings_json or [], "isShared": t.is_shared,
         "createdAt": t.created_at.isoformat() if t.created_at else None
     } for t in result.scalars().all()]
     return {"templates": templates}
