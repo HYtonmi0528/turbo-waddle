@@ -12,7 +12,7 @@ class User(Base):
     display_name = Column(String(100), nullable=False)
     password_hash = Column(String(128), nullable=False)
     password_salt = Column(String(32), nullable=False)
-    role = Column(Enum("admin","manager","purchaser","viewer"), default="viewer")
+    role = Column(Enum("admin","manager","purchaser","viewer","employee"), default="viewer")
     status = Column(Enum("pending","active","disabled"), default="pending")
     created_at = Column(DateTime(3), default=datetime.datetime.utcnow)
     updated_at = Column(DateTime(3), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
