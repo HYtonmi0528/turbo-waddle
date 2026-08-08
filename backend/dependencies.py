@@ -67,4 +67,4 @@ def require_role(*roles: str):
         if user.role not in roles:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="权限不足")
         return user
-    return Depends(dependency)
+    return dependency

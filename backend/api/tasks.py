@@ -4,7 +4,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from database import get_db, AsyncSessionLocal
-from models import RfqTask, RfqItem, Notification, User, TaskComment, AuditLog
+from models import RfqTask, RfqItem, Notification, User, TaskComment
 from dependencies import get_current_user, require_role
 
 router = APIRouter(prefix="/api/tasks", tags=["任务"])

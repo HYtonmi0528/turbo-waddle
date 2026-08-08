@@ -1,7 +1,10 @@
 import json, os
 from pathlib import Path
 
-CONFIG_PATH = Path(os.environ.get("LATIC_CONFIG", Path(__file__).parent.parent / "server-data" / "config.json"))
+# Try existing Node project config first, then v2's own
+existing_path = Path(__file__).parent.parent.parent / "rfq-collaboration-test" / "server-data" / "config.json"
+v2_path = Path(__file__).parent.parent / "server-data" / "config.json"
+CONFIG_PATH = existing_path if existing_path.exists() else v2_path
 
 def load_config():
     with open(CONFIG_PATH) as f:
