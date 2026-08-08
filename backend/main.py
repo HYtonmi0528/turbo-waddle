@@ -101,6 +101,9 @@ frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
 if os.path.exists(frontend_dir):
     from fastapi.staticfiles import StaticFiles
     app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
+    @app.get("/logo.png")
+    async def serve_logo():
+        return FileResponse(os.path.join(frontend_dir, "logo.png"))
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str = ""):
         index_path = os.path.join(frontend_dir, "index.html")
