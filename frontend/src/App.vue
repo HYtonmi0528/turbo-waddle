@@ -1,5 +1,8 @@
 <template>
-  <div v-if="!auth.isLoggedIn" class="login-shell"><Login /></div>
+  <div v-if="showSplash" class="startup-splash">
+    <img src="/logo.png" alt="LATIC" @animationend="showSplash=false" />
+  </div>
+  <div v-else-if="!auth.isLoggedIn" class="login-shell"><Login /></div>
   <el-container v-else style="height:100vh">
     <el-aside width="200px">
       <div style="padding:16px;color:#fff;font-weight:600;font-size:14px;text-align:center">LATIC 询价协作</div>
@@ -55,6 +58,7 @@ import Login from './views/Login.vue'
 import axios from 'axios'
 const auth = useAuthStore(); const router = useRouter(); const route = useRoute()
 const search = ref(''); const searchResults = ref(null); const unread = ref(0); const notifications = ref([])
+const showSplash = ref(true)
 let pollTimer = null
 function roleLabel(r) { return {admin:'管理员',manager:'经理',purchaser:'采购员',viewer:'查看者'}[r]||r }
 async function doLogout() { await auth.logout(); router.push('/login') }
@@ -78,4 +82,7 @@ onUnmounted(() => clearInterval(pollTimer))
 .search-dropdown { position:absolute;top:100%;left:0;right:0;background:#fff;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:100;max-height:320px;overflow-y:auto }
 .search-item { padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid #f0f0f0 }
 .search-item:hover { background:#f4f7fc }
+.startup-splash { display:flex;align-items:center;justify-content:center;height:100vh;background:linear-gradient(135deg,#1e2d47,#3a5a8c) }
+.startup-splash img { width:200px;animation:laticPulse 2s ease-out forwards }
+@keyframes laticPulse { 0%{transform:scale(.8);opacity:0}50%{transform:scale(1.05);opacity:1}100%{transform:scale(1);opacity:1} }
 </style>
