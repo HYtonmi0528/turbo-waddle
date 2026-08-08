@@ -1,7 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, FileResponse
 from api import auth, tasks, users, templates, data
 from dependencies import get_current_user
+import os
 
 app = FastAPI(title="LATIC询价协作系统", version="2.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
@@ -57,8 +59,35 @@ async def startup():
 async def excel_generate(templateId: str = ""):
     return {"detail": "请使用POST请求"}
 @app.post("/api/excel/generate")
-async def excel_generate_post(templateId: str = "", body: dict = None):
-    return {"detail": "Excel生成需要模板文件"}  # Will implement with openpyxl
+async def excel_generate_post(body: dict, user=Depends(get_current_user)):
+    import openpyxl, tempfile, io, os
+    from fastapi.responses import StreamingResponse
+    from database import AsyncSessionLocal
+    from models import UserTemplate
+    tid = body.get("templateId")
+    if not tid: raise HTTPException(400, "请选择模板")
+    async with AsyncSessionLocal() as db:
+        from sqlalchemy import select
+        tpl = (await db.execute(select(UserTemplate).where(UserTemplate.id == tid))).scalar_one_or_none()
+        if not tpl or not tpl.storage_path or not os.path.exists(tpl.storage_path):
+            raise HTTPException(400, "模板文件不存在")
+        wb = openpyxl.load_workbook(tpl.storage_path)
+        ws = wb.active
+        structure = tpl.structure_json or {}
+        hr = structure.get("headerRow", 1) + 1
+        batches = body.get("batches", [])
+        row_num = hr
+        for batch in batches:
+            items = batch.get("items", [])
+            for item in items:
+                for col_idx, val in enumerate(item.values(), 1):
+                    try: ws.cell(row=row_num, column=col_idx, value=val)
+                    except: pass
+                row_num += 1
+        output = io.BytesIO()
+        wb.save(output); output.seek(0)
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                 headers={"Content-Disposition": f"attachment;filename=generated.xlsx"})
 
 @app.get("/api/db/tables")
 async def db_tables(user=Depends(get_current_user)):
@@ -102,3 +131,37 @@ async def submit_review(id: str):
 @app.post("/api/tasks/{id}/snapshots")
 async def snapshots(id: str):
     return {"ok": True, "version": 1}
+
+@app.post("/api/tasks/{tid}/items/{iid}/attachments")
+async def upload_attachment(tid: str, iid: str, file: UploadFile = File(...)):
+    import shutil
+    store = os.path.join(config.get("storageDir", "./server-data/files"), "tasks", tid, "attachments")
+    os.makedirs(store, exist_ok=True)
+    fpath = os.path.join(store, f"{__import__('uuid').uuid4()}-{file.filename}")
+    with open(fpath, "wb") as f: shutil.copyfileobj(file.file, f)
+    return {"ok": True, "name": file.filename, "size": os.path.getsize(fpath)}
+
+@app.get("/api/tasks/{tid}/items/{iid}/attachments/{aid}")
+async def get_attachment(tid: str, iid: str, aid: str):
+    from fastapi.responses import FileResponse
+    store = os.path.join(config.get("storageDir", "./server-data/files"), "tasks", tid, "attachments")
+    if not os.path.exists(store): raise HTTPException(404)
+    files = [f for f in os.listdir(store) if f.startswith(aid) or aid in f]
+    if not files: raise HTTPException(404)
+    return FileResponse(os.path.join(store, files[0]))
+
+@app.post("/api/excel/open-existing")
+async def excel_open_existing(file: UploadFile = File(...)):
+    import openpyxl
+    content = await file.read()
+    wb = openpyxl.load_workbook(__import__('io').BytesIO(content), data_only=True)
+    ws = wb.active
+    batches = [{"category": "", "items": []}]
+    for r in range(2, ws.max_row + 1):
+        first = str(ws.cell(r, 1).value or "").strip()
+        if not first and not ws.cell(r, 2).value: continue
+        item = {}
+        for c in range(1, ws.max_column + 1):
+            item[f"col_{c}"] = ws.cell(r, c).value
+        batches[0]["items"].append(item)
+    return {"success": True, "batches": batches}

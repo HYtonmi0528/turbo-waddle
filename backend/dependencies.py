@@ -6,23 +6,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import User, Session
 from config import load_config
-from passlib.context import CryptContext
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def hash_password(password: str) -> dict:
+    salt = os.urandom(16)
+    key = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=64)
+    return {"hash": key.hex(), "salt": salt.hex()}
+
+def verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
+    if not salt_hex or not hash_hex: return False
+    salt = bytes.fromhex(salt_hex) if len(salt_hex) > 30 else salt_hex.encode()
+    if isinstance(salt, str): salt = salt[:16]
+    key = hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=64)
+    return key.hex() == hash_hex
+
+# Remove old bcrypt code
 bearer = HTTPBearer(auto_error=False)
 config = load_config()
 JWT_SECRET = config.get("sessionSecret", secrets.token_hex(32))
 JWT_ALGORITHM = "HS256"
 ACCESS_EXPIRE_MINUTES = 30
 REFRESH_EXPIRE_DAYS = 30
-
-def hash_password(password: str) -> dict:
-    salt = secrets.token_hex(16)
-    hash_val = pwd_context.hash(password + salt)
-    return {"hash": hash_val, "salt": salt}
-
-def verify_password(password: str, salt: str, hash_val: str) -> bool:
-    return pwd_context.verify(password + salt, hash_val)
 
 def create_token(data: dict, expires_delta: int) -> str:
     from jose import jwt
