@@ -79,10 +79,10 @@ onUnmounted(() => clearInterval(pollTimer))
 </script>
 
 <style>
-.search-dropdown { position:absolute;top:100%;left:0;right:0;background:#fff;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:100;max-height:320px;overflow-y:auto }
+.search-dropdown { position:absolute;top:100%;left:0;right:0;background:#fff;border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.15);z-index:100;max-height:320px;overflow-y:auto;margin-top:4px }
 .search-item { padding:8px 12px;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;border-bottom:1px solid #f0f0f0 }
 .search-item:hover { background:#f4f7fc }
 .startup-splash { display:flex;align-items:center;justify-content:center;height:100vh;background:linear-gradient(135deg,#1e2d47,#3a5a8c) }
-.startup-splash img { width:200px;animation:laticPulse 2s ease-out forwards }
+.startup-splash img { width:180px;animation:laticPulse 2s ease-out forwards }
 @keyframes laticPulse { 0%{transform:scale(.8);opacity:0}50%{transform:scale(1.05);opacity:1}100%{transform:scale(1);opacity:1} }
 </style>

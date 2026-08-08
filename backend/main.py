@@ -24,7 +24,6 @@ async def health():
 async def setup_status():
     from database import AsyncSessionLocal
     from sqlalchemy import select, func
-    from models import User
     async with AsyncSessionLocal() as db:
         count = await db.scalar(select(func.count()).select_from(User))
         return {"initialized": count > 0, "canInitialize": True}
@@ -53,13 +52,13 @@ async def exchange_rate(force: str = ""):
 async def search(q: str = ""):
     if len(q) < 2: return {"tasks": [], "items": []}
     from database import AsyncSessionLocal
+    like = f"%{q}%"
+    from sqlalchemy import or_
+    from models import RfqItem
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import or_
-        like = f"%{q}%"
         tasks = await db.execute(
             select(RfqTask).where(or_(RfqTask.title.like(like), RfqTask.task_no.like(like), RfqTask.requester.like(like))).limit(20)
         )
-        from models import RfqItem
         items = await db.execute(
             select(RfqItem.id, RfqItem.line_no, RfqItem.description, RfqItem.selected_supplier, RfqItem.task_id, RfqTask.title, RfqTask.task_no)
             .join(RfqTask, RfqTask.id == RfqItem.task_id)
@@ -73,7 +72,6 @@ async def search(q: str = ""):
 @app.get("/api/notifications")
 async def get_notifications(user=Depends(get_current_user)):
     from database import AsyncSessionLocal
-    from models import Notification
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(Notification).where(Notification.user_id == user.id).order_by(Notification.created_at.desc()).limit(50))
         return {"notifications": [{"id": n.id, "title": n.title, "message": n.message, "type": n.type, "taskId": n.task_id, "isRead": n.is_read, "createdAt": n.created_at.isoformat() if n.created_at else None} for n in result.scalars().all()]}
@@ -81,81 +79,10 @@ async def get_notifications(user=Depends(get_current_user)):
 @app.patch("/api/notifications/{nid}/read")
 async def read_notif(nid: str, user=Depends(get_current_user)):
     from database import AsyncSessionLocal
-    from models import Notification
-    from sqlalchemy import update
     async with AsyncSessionLocal() as db:
         await db.execute(update(Notification).where(Notification.id==nid, Notification.user_id==user.id).values(is_read=True))
         await db.commit()
     return {"ok": True}
-
-from sqlalchemy import select, update
-
-@app.on_event("startup")
-async def startup():
-    from database import engine, Base
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-# Serve frontend static files in production
-frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
-if os.path.exists(frontend_dir):
-    from fastapi.staticfiles import StaticFiles
-    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
-    @app.get("/logo.png")
-    async def serve_logo():
-        return FileResponse(os.path.join(frontend_dir, "logo.png"))
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str = ""):
-        index_path = os.path.join(frontend_dir, "index.html")
-        if os.path.exists(index_path):
-            return FileResponse(index_path)
-    @app.get("/")
-    async def serve_root():
-        return FileResponse(os.path.join(frontend_dir, "index.html"))
-
-@app.get("/api/excel/generate")
-async def excel_generate(templateId: str = ""):
-    return {"detail": "请使用POST请求"}
-@app.post("/api/excel/generate")
-async def excel_generate_post(body: dict, user=Depends(get_current_user)):
-    import openpyxl, io, uuid, datetime
-    from fastapi.responses import StreamingResponse
-    from database import AsyncSessionLocal
-    tid = body.get("templateId")
-    if not tid: raise HTTPException(400, "请选择模板")
-    async with AsyncSessionLocal() as db:
-        tpl = (await db.execute(select(UserTemplate).where(UserTemplate.id == tid))).scalar_one_or_none()
-        if not tpl or not tpl.storage_path or not os.path.exists(tpl.storage_path):
-            raise HTTPException(400, "模板文件不存在")
-        wb = openpyxl.load_workbook(tpl.storage_path)
-        ws = wb.active
-        structure = tpl.structure_json or {}
-        hr = structure.get("headerRow", 1) + 1
-        batches = body.get("batches", [])
-        row_num = hr
-        for batch in batches:
-            items = batch.get("items", [])
-            for item in items:
-                for col_idx, val in enumerate(item.values(), 1):
-                    try: ws.cell(row=row_num, column=col_idx, value=val)
-                    except: pass
-                row_num += 1
-        output = io.BytesIO()
-        wb.save(output); output.seek(0)
-
-        # Record generation history
-        storage_dir = os.path.join(config.get("storageDir", "./server-data/files"), "generated")
-        os.makedirs(storage_dir, exist_ok=True)
-        out_path = os.path.join(storage_dir, f"{uuid.uuid4()}.xlsx")
-        with open(out_path, "wb") as f: f.write(output.getvalue())
-        output.seek(0)
-
-        entry = DataEntry(id=str(uuid.uuid4()), user_id=user.id, type="excel_generated",
-                         data={"templateName": tpl.name, "rows": row_num - hr, "filePath": out_path, "generatedAt": datetime.datetime.utcnow().isoformat()})
-        db.add(entry); await db.commit()
-
-        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                 headers={"Content-Disposition": f"attachment;filename=generated_{datetime.date.today()}.xlsx"})
 
 @app.get("/api/fields")
 async def list_fields(user=Depends(get_current_user)):
@@ -219,59 +146,42 @@ async def db_query(body: dict):
             columns = list(result.keys())
             rows = [dict(zip(columns, row)) for row in result.all()]
             return {"columns": columns, "rows": rows, "total": len(rows)}
-        except:
-            return {"columns": [], "rows": [], "total": 0}
+        except: return {"columns": [], "rows": [], "total": 0}
 
-@app.post("/api/tasks/{id}/submit-review")
-async def submit_review(id: str, user=Depends(get_current_user)):
+@app.post("/api/excel/generate")
+async def excel_generate_post(body: dict, user=Depends(get_current_user)):
+    import openpyxl, io, uuid, datetime
     from database import AsyncSessionLocal
-    from models import RfqTask, Notification
-    import uuid as _uuid, datetime as _dt
+    tid = body.get("templateId")
+    if not tid: raise HTTPException(400, "请选择模板")
     async with AsyncSessionLocal() as db:
-        task = (await db.execute(select(RfqTask).where(RfqTask.id == id))).scalar_one_or_none()
-        if not task: raise HTTPException(404, "任务不存在")
-        task.status = "review"
-        task.updated_at = _dt.datetime.utcnow()
-        # Notify admins and managers
-        admins = (await db.execute(select(User).where(User.role.in_(["admin","manager"]), User.status == "active"))).scalars().all()
-        for a in admins:
-            n = Notification(id=str(_uuid.uuid4()), user_id=a.id, type="review", title="询价任务等待审核",
-                            message=f"{user.display_name}提交了任务", task_id=id)
-            db.add(n)
-        await db.commit()
-    return {"ok": True}
-
-@app.post("/api/tasks/{id}/snapshots")
-async def snapshots(id: str, user=Depends(get_current_user)):
-    from database import AsyncSessionLocal
-    from models import RfqTask
-    async with AsyncSessionLocal() as db:
-        task = (await db.execute(select(RfqTask).where(RfqTask.id == id))).scalar_one_or_none()
-        if not task: raise HTTPException(404)
-        version = task.current_version or 1
-        task.current_version = version + 1
-        task.status = "submitted"
-        task.updated_at = __import__("datetime").datetime.utcnow()
-        await db.commit()
-        return {"ok": True, "version": version + 1}
-
-@app.post("/api/tasks/{tid}/items/{iid}/attachments")
-async def upload_attachment(tid: str, iid: str, file: UploadFile = File(...)):
-    import shutil
-    store = os.path.join(config.get("storageDir", "./server-data/files"), "tasks", tid, "attachments")
-    os.makedirs(store, exist_ok=True)
-    fpath = os.path.join(store, f"{__import__('uuid').uuid4()}-{file.filename}")
-    with open(fpath, "wb") as f: shutil.copyfileobj(file.file, f)
-    return {"ok": True, "name": file.filename, "size": os.path.getsize(fpath)}
-
-@app.get("/api/tasks/{tid}/items/{iid}/attachments/{aid}")
-async def get_attachment(tid: str, iid: str, aid: str):
-    from fastapi.responses import FileResponse
-    store = os.path.join(config.get("storageDir", "./server-data/files"), "tasks", tid, "attachments")
-    if not os.path.exists(store): raise HTTPException(404)
-    files = [f for f in os.listdir(store) if f.startswith(aid) or aid in f]
-    if not files: raise HTTPException(404)
-    return FileResponse(os.path.join(store, files[0]))
+        tpl = (await db.execute(select(UserTemplate).where(UserTemplate.id == tid))).scalar_one_or_none()
+        if not tpl or not tpl.storage_path or not os.path.exists(tpl.storage_path):
+            raise HTTPException(400, "模板文件不存在")
+        wb = openpyxl.load_workbook(tpl.storage_path)
+        ws = wb.active
+        structure = tpl.structure_json or {}
+        hr = structure.get("headerRow", 1) + 1
+        batches = body.get("batches", [])
+        row_num = hr
+        for batch in batches:
+            for item in (batch.get("items") or []):
+                for col_idx, val in enumerate(item.values(), 1):
+                    try: ws.cell(row=row_num, column=col_idx, value=val)
+                    except: pass
+                row_num += 1
+        output = io.BytesIO()
+        wb.save(output); output.seek(0)
+        storage_dir = os.path.join(config.get("storageDir", "./server-data/files"), "generated")
+        os.makedirs(storage_dir, exist_ok=True)
+        out_path = os.path.join(storage_dir, f"{uuid.uuid4()}.xlsx")
+        with open(out_path, "wb") as f: f.write(output.getvalue())
+        output.seek(0)
+        entry = DataEntry(id=str(uuid.uuid4()), user_id=user.id, type="excel_generated",
+                         data={"templateName": tpl.name, "rows": row_num - hr, "filePath": out_path, "generatedAt": datetime.datetime.utcnow().isoformat()})
+        db.add(entry); await db.commit()
+        return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                 headers={"Content-Disposition": f"attachment;filename=generated_{datetime.date.today()}.xlsx"})
 
 @app.post("/api/excel/open-existing")
 async def excel_open_existing(file: UploadFile = File(...)):
@@ -284,7 +194,67 @@ async def excel_open_existing(file: UploadFile = File(...)):
         first = str(ws.cell(r, 1).value or "").strip()
         if not first and not ws.cell(r, 2).value: continue
         item = {}
-        for c in range(1, ws.max_column + 1):
-            item[f"col_{c}"] = ws.cell(r, c).value
+        for c in range(1, ws.max_column + 1): item[f"col_{c}"] = ws.cell(r, c).value
         batches[0]["items"].append(item)
     return {"success": True, "batches": batches}
+
+@app.post("/api/tasks/{id}/submit-review")
+async def submit_review(id: str, user=Depends(get_current_user)):
+    from database import AsyncSessionLocal
+    import uuid as _uuid, datetime as _dt
+    async with AsyncSessionLocal() as db:
+        task = (await db.execute(select(RfqTask).where(RfqTask.id == id))).scalar_one_or_none()
+        if not task: raise HTTPException(404)
+        task.status = "review"; task.updated_at = _dt.datetime.utcnow()
+        admins = (await db.execute(select(User).where(User.role.in_(["admin","manager"]), User.status == "active"))).scalars().all()
+        for a in admins:
+            db.add(Notification(id=str(_uuid.uuid4()), user_id=a.id, type="review", title="询价任务等待审核", message=f"{user.display_name}提交了任务", task_id=id))
+        await db.commit()
+    return {"ok": True}
+
+@app.post("/api/tasks/{id}/snapshots")
+async def snapshots(id: str, user=Depends(get_current_user)):
+    from database import AsyncSessionLocal
+    async with AsyncSessionLocal() as db:
+        task = (await db.execute(select(RfqTask).where(RfqTask.id == id))).scalar_one_or_none()
+        if not task: raise HTTPException(404)
+        version = task.current_version or 1
+        task.current_version = version + 1; task.status = "submitted"; task.updated_at = __import__("datetime").datetime.utcnow()
+        await db.commit()
+        return {"ok": True, "version": version + 1}
+
+@app.post("/api/tasks/{tid}/items/{iid}/attachments")
+async def upload_attachment(tid: str, iid: str, file: UploadFile = File(...)):
+    store = os.path.join(os.environ.get("STORAGE_DIR", "./server-data/files"), "tasks", tid, "attachments")
+    os.makedirs(store, exist_ok=True)
+    fpath = os.path.join(store, f"{__import__('uuid').uuid4()}-{file.filename}")
+    with open(fpath, "wb") as f:
+        while chunk := await file.read(65536): f.write(chunk)
+    return {"ok": True, "name": file.filename, "size": os.path.getsize(fpath)}
+
+@app.get("/api/tasks/{tid}/items/{iid}/attachments/{aid}")
+async def get_attachment(tid: str, iid: str, aid: str):
+    store = os.path.join(os.environ.get("STORAGE_DIR", "./server-data/files"), "tasks", tid, "attachments")
+    if not os.path.exists(store): raise HTTPException(404)
+    files = [f for f in os.listdir(store) if f.startswith(aid) or aid in f]
+    if not files: raise HTTPException(404)
+    return FileResponse(os.path.join(store, files[0]))
+
+@app.on_event("startup")
+async def startup():
+    from database import engine, Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "dist")
+if os.path.exists(frontend_dir):
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dir, "assets")), name="assets")
+    @app.get("/logo.png")
+    async def serve_logo(): return FileResponse(os.path.join(frontend_dir, "logo.png"))
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str = ""):
+        index_path = os.path.join(frontend_dir, "index.html")
+        if os.path.exists(index_path): return FileResponse(index_path)
+    @app.get("/")
+    async def serve_root(): return FileResponse(os.path.join(frontend_dir, "index.html"))
