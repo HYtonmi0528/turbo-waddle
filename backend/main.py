@@ -3,6 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from api import auth, tasks, users, templates, data
 from dependencies import get_current_user
+from models import User, UserTemplate, RfqTask, Notification
+from sqlalchemy import select, update
 import os
 
 app = FastAPI(title="LATIC询价协作系统", version="2.1.0")
@@ -28,18 +30,45 @@ async def setup_status():
         return {"initialized": count > 0, "canInitialize": True}
 
 @app.get("/api/exchange-rate")
-async def exchange_rate():
-    return {"rate": 7.25, "source": "默认"}
+async def exchange_rate(force: str = ""):
+    import json
+    cache_path = os.path.join(os.path.dirname(__file__), '..', 'server-data', 'exrate.json')
+    today = __import__("datetime").date.today().isoformat()
+    if force != "1":
+        try:
+            with open(cache_path) as f: cached = json.load(f)
+            if cached.get("date") == today: return cached
+        except: pass
+    try:
+        import urllib.request
+        resp = urllib.request.urlopen("https://api.frankfurter.dev/latest?from=USD&to=CNY", timeout=8)
+        data = json.loads(resp.read())
+        result = {"rate": data["rates"]["CNY"], "date": data["date"], "source": "frankfurter.dev"}
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, "w") as f: json.dump(result, f)
+        return result
+    except: return {"rate": 7.25, "date": today, "source": "默认"}
 
 @app.get("/api/search")
 async def search(q: str = ""):
     if len(q) < 2: return {"tasks": [], "items": []}
     from database import AsyncSessionLocal
-    from models import RfqTask, RfqItem
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
-        tasks = await db.execute(select(RfqTask).where(RfqTask.title.like(f"%{q}%")).limit(20))
-        return {"tasks": [{"id": t.id, "taskNo": t.task_no, "title": t.title, "status": t.status} for t in tasks.scalars()], "items": []}
+        from sqlalchemy import or_
+        like = f"%{q}%"
+        tasks = await db.execute(
+            select(RfqTask).where(or_(RfqTask.title.like(like), RfqTask.task_no.like(like), RfqTask.requester.like(like))).limit(20)
+        )
+        from models import RfqItem
+        items = await db.execute(
+            select(RfqItem.id, RfqItem.line_no, RfqItem.description, RfqItem.selected_supplier, RfqItem.task_id, RfqTask.title, RfqTask.task_no)
+            .join(RfqTask, RfqTask.id == RfqItem.task_id)
+            .where(or_(RfqItem.description.like(like), RfqItem.product_code.like(like), RfqItem.selected_supplier.like(like))).limit(20)
+        )
+        return {
+            "tasks": [{"id": t.id, "taskNo": t.task_no, "title": t.title, "status": t.status} for t in tasks.scalars()],
+            "items": [{"id": r[0], "lineNo": r[1], "description": r[2], "supplier": r[3], "taskId": r[4], "taskTitle": r[5], "taskNo": r[6]} for r in items.all()]
+        }
 
 @app.get("/api/notifications")
 async def get_notifications(user=Depends(get_current_user)):
@@ -138,11 +167,37 @@ async def db_query(body: dict):
             return {"columns": [], "rows": [], "total": 0}
 
 @app.post("/api/tasks/{id}/submit-review")
-async def submit_review(id: str):
+async def submit_review(id: str, user=Depends(get_current_user)):
+    from database import AsyncSessionLocal
+    from models import RfqTask, Notification
+    import uuid as _uuid, datetime as _dt
+    async with AsyncSessionLocal() as db:
+        task = (await db.execute(select(RfqTask).where(RfqTask.id == id))).scalar_one_or_none()
+        if not task: raise HTTPException(404, "任务不存在")
+        task.status = "review"
+        task.updated_at = _dt.datetime.utcnow()
+        # Notify admins and managers
+        admins = (await db.execute(select(User).where(User.role.in_(["admin","manager"]), User.status == "active"))).scalars().all()
+        for a in admins:
+            n = Notification(id=str(_uuid.uuid4()), user_id=a.id, type="review", title="询价任务等待审核",
+                            message=f"{user.display_name}提交了任务", task_id=id)
+            db.add(n)
+        await db.commit()
     return {"ok": True}
+
 @app.post("/api/tasks/{id}/snapshots")
-async def snapshots(id: str):
-    return {"ok": True, "version": 1}
+async def snapshots(id: str, user=Depends(get_current_user)):
+    from database import AsyncSessionLocal
+    from models import RfqTask
+    async with AsyncSessionLocal() as db:
+        task = (await db.execute(select(RfqTask).where(RfqTask.id == id))).scalar_one_or_none()
+        if not task: raise HTTPException(404)
+        version = task.current_version or 1
+        task.current_version = version + 1
+        task.status = "submitted"
+        task.updated_at = __import__("datetime").datetime.utcnow()
+        await db.commit()
+        return {"ok": True, "version": version + 1}
 
 @app.post("/api/tasks/{tid}/items/{iid}/attachments")
 async def upload_attachment(tid: str, iid: str, file: UploadFile = File(...)):

@@ -68,32 +68,75 @@ class ImportMeta(BaseModel):
 
 @router.post("/import")
 async def import_task(file: UploadFile = File(...), user: User = Depends(require_role("admin", "manager")), db: AsyncSession = Depends(get_db)):
-    import openpyxl
+    import openpyxl, datetime, io
     config_path = os.path.join(os.path.dirname(__file__), '..', '..', 'server-data', 'files')
-    os.makedirs(config_path, exist_ok=True)
+    os.makedirs(os.path.join(config_path, 'tasks'), exist_ok=True)
     tid = str(uuid.uuid4())
     file_path = os.path.join(config_path, 'tasks', tid)
     os.makedirs(file_path, exist_ok=True)
     content = await file.read()
-    safe_name = file.filename.replace(" ", "_")
+    safe_name = file.filename.replace(" ", "_") if file.filename else "import.xlsx"
     dest = os.path.join(file_path, safe_name)
     with open(dest, "wb") as f: f.write(content)
 
     wb = openpyxl.load_workbook(dest, data_only=True)
-    ws = wb.active
-    items = []
-    for r in range(2, ws.max_row + 1):
-        desc = str(ws.cell(r, 1).value or "").strip()
+    # Find best sheet
+    best_ws = None; best_hits = 0; best_hr = 1
+    FIELD_ALIASES = {
+        "description": ["descripción","descripcion","description","描述","产品描述","品名","product description"],
+        "quantity": ["cantidad","cant.","quantity","数量","qty","quantities"],
+        "unit": ["unidad","unit","单位","u/m"],
+        "code": ["código","codigo","code","ref","reference","referencia","型号","代码","product code"],
+        "ltc": ["ltc","hs code","arancel","关税"]
+    }
+    for ws in wb.worksheets:
+        hits = 0; header_row = 1
+        for r in range(1, min(41, ws.max_row + 1)):
+            row_hits = 0
+            row_vals = [str(ws.cell(r, c).value or "").lower().strip() for c in range(1, min(51, ws.max_column + 1))]
+            for aliases in FIELD_ALIASES.values():
+                for v in row_vals:
+                    for a in aliases:
+                        if a in v: row_hits += 1; break
+            if row_hits >= 3: header_row = r; hits = row_hits; break
+        if hits > best_hits: best_hits = hits; best_ws = ws; best_hr = header_row
+
+    if not best_ws: best_ws = wb.active
+    ws = best_ws
+
+    # Map columns
+    col_map = {}
+    for c in range(1, ws.max_column + 1):
+        val = str(ws.cell(best_hr, c).value or "").lower().strip()
+        for field, aliases in FIELD_ALIASES.items():
+            for a in aliases:
+                if a in val: col_map[field] = c; break
+            if field in col_map: break
+
+    items = []; blanks = 0
+    for r in range(best_hr + 1, ws.max_row + 1):
+        desc = str(ws.cell(r, col_map.get("description") or 1).value or "").strip()
+        if desc: blanks = 0
+        else: blanks += 1
+        if blanks > 8: break
         if not desc: continue
-        items.append({"lineNo": r - 1, "description": desc, "quantity": ws.cell(r, 4).value,
-                       "unit": str(ws.cell(r, 5).value or ""), "productCode": str(ws.cell(r, 3).value or ""),
-                       "source": {}})
-    task = RfqTask(id=tid, task_no=f"RFQ-{datetime.date.today()}", title=safe_name.replace(".xlsx",""), status="published",
+        raw = str(ws.cell(r, 1).value or "").lower()
+        if any(kw in raw for kw in ["total","subtotal","suma","合计"]): break
+        items.append({
+            "lineNo": len(items) + 1, "description": desc,
+            "quantity": ws.cell(r, col_map.get("quantity") or 2).value if col_map.get("quantity") else None,
+            "unit": str(ws.cell(r, col_map.get("unit") or 2).value or "") if col_map.get("unit") else "",
+            "productCode": str(ws.cell(r, col_map.get("code") or 2).value or "") if col_map.get("code") else "",
+            "source": {}
+        })
+
+    task = RfqTask(id=tid, task_no=f"RFQ-{datetime.date.today()}-{int(__import__('time').time())%10000}",
+                   title=safe_name.replace(".xlsx",""), status="published",
                    source_original_name=safe_name, source_storage_path=dest, created_by=user.id)
     db.add(task)
-    for i, item in enumerate(items, 1):
-        db.add(RfqItem(id=str(uuid.uuid4()), task_id=tid, line_no=i, description=item["description"],
-                        quantity=item["quantity"], unit=item.get("unit"), product_code=item.get("productCode")))
+    for item in items:
+        db.add(RfqItem(id=str(uuid.uuid4()), task_id=tid, line_no=item["lineNo"], description=item["description"],
+                        quantity=item.get("quantity"), unit=item.get("unit"), product_code=item.get("productCode")))
     await db.commit()
     return {"id": tid, "title": task.title, "itemCount": len(items)}
 
