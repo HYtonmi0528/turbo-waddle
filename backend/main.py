@@ -42,12 +42,24 @@ async def search(q: str = ""):
         return {"tasks": [{"id": t.id, "taskNo": t.task_no, "title": t.title, "status": t.status} for t in tasks.scalars()], "items": []}
 
 @app.get("/api/notifications")
-async def notifications():
+async def get_notifications(user=Depends(get_current_user)):
     from database import AsyncSessionLocal
     from models import Notification
     async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Notification).limit(50))
-        return {"notifications": []}
+        result = await db.execute(select(Notification).where(Notification.user_id == user.id).order_by(Notification.created_at.desc()).limit(50))
+        return {"notifications": [{"id": n.id, "title": n.title, "message": n.message, "type": n.type, "taskId": n.task_id, "isRead": n.is_read, "createdAt": n.created_at.isoformat() if n.created_at else None} for n in result.scalars().all()]}
+
+@app.patch("/api/notifications/{nid}/read")
+async def read_notif(nid: str, user=Depends(get_current_user)):
+    from database import AsyncSessionLocal
+    from models import Notification
+    from sqlalchemy import update
+    async with AsyncSessionLocal() as db:
+        await db.execute(update(Notification).where(Notification.id==nid, Notification.user_id==user.id).values(is_read=True))
+        await db.commit()
+    return {"ok": True}
+
+from sqlalchemy import select, update
 
 @app.on_event("startup")
 async def startup():
