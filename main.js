@@ -153,6 +153,28 @@ function registerIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) return { canceled: true };
     return collaborationClient.importTask(result.filePaths[0], metadata);
   });
+  ipcMain.handle('collaboration:listExternalSubmissions', async () => collaborationClient.listExternalSubmissions());
+  ipcMain.handle('collaboration:acceptExternalSubmission', async (event, id, payload = {}) =>
+    collaborationClient.acceptExternalSubmission(id, payload));
+  ipcMain.handle('collaboration:rejectExternalSubmission', async (event, id, reason = '') =>
+    collaborationClient.rejectExternalSubmission(id, reason));
+  ipcMain.handle('collaboration:listDocuments', async (event, params = {}) =>
+    collaborationClient.listDocuments(params));
+  ipcMain.handle('collaboration:uploadDocument', async (event, metadata = {}) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要归档到资料中心的文件',
+      filters: [{ name: '常用资料', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip', 'png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+      properties: ['openFile']
+    });
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+    return collaborationClient.uploadDocument(result.filePaths[0], metadata);
+  });
+  ipcMain.handle('collaboration:downloadDocument', async (event, document) => {
+    const result = await dialog.showSaveDialog(mainWindow, { title: '保存资料', defaultPath: document.originalName || '资料' });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    return collaborationClient.downloadFile(`/api/documents/${encodeURIComponent(document.id)}/download`, result.filePath);
+  });
+  ipcMain.handle('collaboration:deleteDocument', async (event, id) => collaborationClient.deleteDocument(id));
   ipcMain.handle('collaboration:updateTaskItem', async (event, taskId, itemId, payload) => {
     return collaborationClient.request(
       `/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}`,

@@ -21,6 +21,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listTasks: () => ipcRenderer.invoke('collaboration:listTasks'),
     getTask: (taskId) => ipcRenderer.invoke('collaboration:getTask', taskId),
     importTask: (metadata) => ipcRenderer.invoke('collaboration:importTask', metadata),
+    listExternalSubmissions: () => ipcRenderer.invoke('collaboration:listExternalSubmissions'),
+    acceptExternalSubmission: (id, payload) => ipcRenderer.invoke('collaboration:acceptExternalSubmission', id, payload),
+    rejectExternalSubmission: (id, reason) => ipcRenderer.invoke('collaboration:rejectExternalSubmission', id, reason),
+    listDocuments: (params = {}) => ipcRenderer.invoke('collaboration:listDocuments', params),
+    uploadDocument: (metadata = {}) => ipcRenderer.invoke('collaboration:uploadDocument', metadata),
+    downloadDocument: (document) => ipcRenderer.invoke('collaboration:downloadDocument', document),
+    deleteDocument: (id) => ipcRenderer.invoke('collaboration:deleteDocument', id),
     updateTaskItem: (taskId, itemId, payload) =>
       ipcRenderer.invoke('collaboration:updateTaskItem', taskId, itemId, payload),
     uploadTaskAttachment: (taskId, itemId) =>

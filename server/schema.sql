@@ -63,6 +63,60 @@ CREATE TABLE IF NOT EXISTS rfq_tasks (
   INDEX idx_tasks_created_by (created_by)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+-- 海外端提交的询价单先进入接收箱，管理员确认后再生成 rfq_tasks。
+-- 这样可以区分“外部已提交”和“国内已下发”的业务状态。
+CREATE TABLE IF NOT EXISTS external_rfq_submissions (
+  id CHAR(36) PRIMARY KEY,
+  external_request_id VARCHAR(120),
+  title VARCHAR(255) NOT NULL,
+  requester VARCHAR(120),
+  country VARCHAR(120),
+  client_name VARCHAR(180),
+  request_date DATE,
+  deadline DATETIME(3),
+  original_name VARCHAR(255) NOT NULL,
+  storage_path VARCHAR(600) NOT NULL,
+  metadata_json JSON,
+  parsed_items_json JSON,
+  status ENUM('received', 'accepted', 'rejected') NOT NULL DEFAULT 'received',
+  received_at DATETIME(3) NOT NULL,
+  reviewed_at DATETIME(3),
+  reviewed_by CHAR(36),
+  rejection_reason TEXT,
+  task_id CHAR(36),
+  CONSTRAINT fk_external_reviewed_by FOREIGN KEY (reviewed_by) REFERENCES users(id),
+  CONSTRAINT fk_external_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE SET NULL,
+  UNIQUE KEY uq_external_request_id (external_request_id),
+  INDEX idx_external_status_received (status, received_at),
+  INDEX idx_external_task (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- 钉盘式资料中心：数据库保存元数据，文件本体保存在 storageDir，后续可替换为 OSS。
+CREATE TABLE IF NOT EXISTS documents (
+  id CHAR(36) PRIMARY KEY,
+  original_name VARCHAR(255) NOT NULL,
+  storage_path VARCHAR(600) NOT NULL,
+  mime_type VARCHAR(160),
+  file_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  file_ext VARCHAR(20),
+  category ENUM('rfq', 'quote', 'supplier', 'product', 'attachment', 'template', 'other') NOT NULL DEFAULT 'other',
+  entity_type VARCHAR(60),
+  entity_id CHAR(36),
+  visibility ENUM('all', 'department', 'private', 'admin') NOT NULL DEFAULT 'all',
+  version_no INT NOT NULL DEFAULT 1,
+  checksum CHAR(64),
+  status ENUM('active', 'deleted') NOT NULL DEFAULT 'active',
+  created_by CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  deleted_at DATETIME(3),
+  CONSTRAINT fk_documents_creator FOREIGN KEY (created_by) REFERENCES users(id),
+  INDEX idx_documents_search (status, category, created_at),
+  INDEX idx_documents_entity (entity_type, entity_id, version_no),
+  INDEX idx_documents_name (original_name),
+  INDEX idx_documents_creator (created_by, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS rfq_items (
   id CHAR(36) PRIMARY KEY,
   task_id CHAR(36) NOT NULL,

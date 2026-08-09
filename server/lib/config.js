@@ -27,6 +27,12 @@ function loadConfig() {
   config.server.host = config.server.host || '0.0.0.0';
   config.server.port = Number(config.server.port || 3210);
   config.mysql.port = Number(config.mysql.port || 3306);
+  config.externalApiKey = String(config.externalApiKey || '').trim();
+  if (config.externalApiKey.length < 24) {
+    const crypto = require('crypto');
+    config.externalApiKey = crypto.randomBytes(32).toString('base64url');
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+  }
   config.storageDir = path.resolve(config.storageDir || path.join(dataDir, 'files'));
   if (!config.sessionSecret || config.sessionSecret.length < 16) {
     const crypto = require('crypto');

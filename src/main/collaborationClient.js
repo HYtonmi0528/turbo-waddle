@@ -164,6 +164,39 @@ class CollaborationClient {
     return this.request('/api/tasks/import', { method: 'POST', body: form, timeout: 120000 });
   }
 
+  listExternalSubmissions() {
+    return this.request('/api/external/rfqs');
+  }
+
+  acceptExternalSubmission(id, payload = {}) {
+    return this.request(`/api/external/rfqs/${encodeURIComponent(id)}/accept`, {
+      method: 'POST', body: payload
+    });
+  }
+
+  rejectExternalSubmission(id, reason = '') {
+    return this.request(`/api/external/rfqs/${encodeURIComponent(id)}/reject`, {
+      method: 'POST', body: { reason }
+    });
+  }
+
+  listDocuments(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value != null && value !== '')).toString();
+    return this.request(`/api/documents${query ? `?${query}` : ''}`);
+  }
+
+  async uploadDocument(filePath, metadata = {}) {
+    const buffer = fs.readFileSync(filePath);
+    const form = new FormData();
+    form.append('file', new Blob([buffer]), path.basename(filePath));
+    Object.entries(metadata).forEach(([key, value]) => { if (value != null && value !== '') form.append(key, String(value)); });
+    return this.request('/api/documents', { method: 'POST', body: form, timeout: 120000 });
+  }
+
+  deleteDocument(id) {
+    return this.request(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
   async uploadTaskAttachment(taskId, itemId, filePath) {
     const buffer = fs.readFileSync(filePath);
     const form = new FormData();

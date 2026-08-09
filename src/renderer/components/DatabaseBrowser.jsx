@@ -65,7 +65,10 @@ export default function DatabaseBrowser() {
   return (
     <div className="db-browser">
       <div className="db-sidebar">
-        <h3 className="db-sidebar-title">本地 SQLite 表</h3>
+        <h3 className="db-sidebar-title">协作 MySQL 表</h3>
+        <p className="text-sm text-muted" style={{ lineHeight: 1.5, marginBottom: 12 }}>
+          每张表对应一个业务对象；详细字段和关联关系见项目 docs/database-dictionary.md。
+        </p>
         {tables.map(t => (
           <button
             key={t.name}

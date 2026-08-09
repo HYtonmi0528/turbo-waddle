@@ -33,6 +33,14 @@ pnpm test
 pnpm run build:win
 ```
 
+## 国内协作数据库
+
+数据库表、业务关系、外部询价接收接口和文件留存规则见：
+
+[`docs/database-dictionary.md`](docs/database-dictionary.md)
+
+海外端目前只需要调用 `POST /api/external/rfqs` 提交询价 Excel；国内管理员在“外部接收箱”确认后，系统才会生成协作任务。
+
 ## 数据位置
 
 用户模板、数据库、草稿和备份保存在 Electron `userData` 目录，不会写入安装目录，也不会包含在安装包和 Git 仓库中。
