@@ -1150,8 +1150,8 @@ function createApp() {
               d.visibility, d.version_no AS versionNo, d.created_at AS createdAt,
               u.display_name AS createdByName
        FROM documents d JOIN users u ON u.id = d.created_by
-       WHERE ${where.join(' AND ')} ORDER BY d.created_at DESC LIMIT ? OFFSET ?`,
-      [...params, pageSize, page * pageSize]
+       WHERE ${where.join(' AND ')} ORDER BY d.created_at DESC LIMIT ${pageSize} OFFSET ${page * pageSize}`,
+      params
     );
     const [[countRow]] = await getPool().execute(`SELECT COUNT(*) AS total FROM documents d WHERE ${where.join(' AND ')}`, params);
     res.json({ documents: rows.map(row => ({ ...row, fileSize: Number(row.fileSize || 0), versionNo: Number(row.versionNo || 1) })), total: Number(countRow.total || 0), page, pageSize });

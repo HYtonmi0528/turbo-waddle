@@ -64,6 +64,13 @@ async function ensureServerSchema() {
   } catch (_) {}
 
   try {
+    await getPool().query(`CREATE TABLE IF NOT EXISTS app_settings (
+      user_id CHAR(36) NOT NULL, setting_key VARCHAR(120) NOT NULL, setting_value TEXT,
+      updated_at DATETIME(3) NOT NULL, PRIMARY KEY (user_id, setting_key)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch (_) {}
+
+  try {
     await getPool().query(`CREATE TABLE IF NOT EXISTS quote_sets (
       id CHAR(36) PRIMARY KEY, user_id CHAR(36) NOT NULL, name VARCHAR(200) NOT NULL,
       project_id CHAR(36), options_json JSON, field_labels_json JSON,
