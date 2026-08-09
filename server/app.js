@@ -292,6 +292,8 @@ function createApp() {
       deadline: req.body.deadline || null,
       sheetName: imported.sheetName,
       headerRow: imported.headerRow,
+      tableCount: imported.tableCount,
+      tables: imported.tables,
       sourceChannel: 'external'
     };
     await getPool().execute(
@@ -507,7 +509,7 @@ function createApp() {
           imported.metadata.client || null, imported.metadata.requestDate || null, req.body.deadline || null,
           imported.metadata.importType || null, imported.metadata.deliveryType || null,
           imported.metadata.paymentType || null, safeOriginalName, sourcePath,
-          json(parseJson(req.body.assignedUserIds, [])), json({ sheetName: imported.sheetName, headerRow: imported.headerRow }),
+          json(parseJson(req.body.assignedUserIds, [])), json({ sheetName: imported.sheetName, headerRow: imported.headerRow, tableCount: imported.tableCount, tables: imported.tables }),
           req.user.id, timestamp, timestamp]
       );
       for (const item of imported.items) {
@@ -635,7 +637,7 @@ function createApp() {
     }
     const [items] = await getPool().execute(
       `SELECT line_no AS lineNo, fob_usd AS fobUsd, total_rmb AS totalRmb, remarks,
-              attachments_json AS attachments
+              attachments_json AS attachments, source_json AS source
        FROM rfq_items WHERE task_id = ? ORDER BY line_no`,
       [req.params.id]
     );
@@ -646,7 +648,8 @@ function createApp() {
     const outputPath = path.join(exportDir, `${Date.now()}-${downloadName}`);
     await exportCompletedRfq(task.source_storage_path, outputPath, items.map(item => ({
       ...item,
-      attachments: parseJson(item.attachments, [])
+      attachments: parseJson(item.attachments, []),
+      source: parseJson(item.source, {})
     })));
     await insertDocument(getPool(), {
       originalName: downloadName, storagePath: outputPath,

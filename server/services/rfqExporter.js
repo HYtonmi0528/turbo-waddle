@@ -95,13 +95,27 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
   const imported = await importRfqWorkbook(sourcePath);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(sourcePath);
-  const sheet = workbook.getWorksheet(imported.sheetName);
-  if (!sheet) throw new Error('原始询价单工作表不存在');
-  const columns = ensureExportColumns(sheet, imported.headerRow);
+  const firstSheet = workbook.getWorksheet(imported.sheetName);
+  if (!firstSheet) throw new Error('原始询价单工作表不存在');
+  const columnsByTable = new Map();
+  const getTable = (item) => {
+    const sheetName = item.sourceSheetName || item.source?.sourceSheetName || imported.sheetName;
+    const headerRow = Number(item.sourceHeaderRow || item.source?.sourceHeaderRow || imported.headerRow);
+    const key = `${sheetName}\u0000${headerRow}`;
+    if (!columnsByTable.has(key)) {
+      const targetSheet = workbook.getWorksheet(sheetName);
+      if (!targetSheet) return null;
+      columnsByTable.set(key, { sheet: targetSheet, headerRow, columns: ensureExportColumns(targetSheet, headerRow) });
+    }
+    return columnsByTable.get(key);
+  };
 
   for (const completed of completedItems) {
     const importedItem = imported.items.find(item => Number(item.lineNo) === Number(completed.lineNo));
     if (!importedItem) continue;
+    const table = getTable(importedItem);
+    if (!table) continue;
+    const { sheet, columns } = table;
     const row = sheet.getRow(importedItem.sourceRow);
     const styleColumn = lastStyledColumn(row, columns.fobUsd - 1);
     const styleSource = row.getCell(styleColumn);
@@ -151,7 +165,7 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
   }
 
   await workbook.xlsx.writeFile(outputPath);
-  return { sheetName: sheet.name, headerRow: imported.headerRow, columns };
+  return { sheetName: imported.sheetName, headerRow: imported.headerRow, tables: [...columnsByTable.values()].map(({ sheet: tableSheet, headerRow, columns }) => ({ sheetName: tableSheet.name, headerRow, columns })) };
 }
 
 module.exports = { exportCompletedRfq, EXPORT_FIELDS };
