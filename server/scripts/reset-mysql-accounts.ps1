@@ -16,7 +16,7 @@ Start-Sleep -Seconds 2
 
 $stdout = "$out\stdout.log"
 $stderr = "$out\stderr.log"
-$proc = Start-Process -FilePath $mysqld -ArgumentList @("--defaults-file=$defaults", '--skip-grant-tables', '--skip-networking=false', '--bind-address=127.0.0.1', '--port=3307', '--console') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+$proc = Start-Process -FilePath $mysqld -ArgumentList @("--defaults-file=$defaults", '--skip-grant-tables', '--named-pipe', '--socket=LATICRecoveryPipe', '--console') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 try {
   Start-Sleep -Seconds 6
   $sql = @"
@@ -30,7 +30,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON latic_
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON latic_rfq.* TO 'latic_rfq_app'@'127.0.0.1';
 FLUSH PRIVILEGES;
 "@
-  $sql | & $mysql --protocol=tcp -h 127.0.0.1 -P 3307 -u root
+  $sql | & $mysql --protocol=PIPE --socket=LATICRecoveryPipe -u root
   if ($LASTEXITCODE -ne 0) { throw "恢复模式登录失败，请查看 $stdout 和 $stderr" }
 } finally {
   if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
