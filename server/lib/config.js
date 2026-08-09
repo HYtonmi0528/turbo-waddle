@@ -2,11 +2,16 @@ const fs = require('fs');
 const path = require('path');
 
 const configuredDataDir = process.env.LATIC_RFQ_DATA_DIR;
+const isPackagedElectron = Boolean(process.versions.electron && process.type === 'browser' && !process.defaultApp);
+const electronDataDir = isPackagedElectron
+  ? path.join(process.env.APPDATA || process.env.LOCALAPPDATA || process.cwd(), 'LATIC-RFQ-Collaboration', 'server-data')
+  : null;
 const sharedDataDir = process.env.ProgramData
   ? path.join(process.env.ProgramData, 'LATIC-RFQ-Collaboration', 'server-data')
   : null;
 const dataDirCandidates = [
   configuredDataDir,
+  electronDataDir,
   path.join(process.cwd(), 'server-data'),
   sharedDataDir
 ].filter(Boolean).map(candidate => path.resolve(candidate));
@@ -33,7 +38,10 @@ function loadConfig() {
     config.externalApiKey = crypto.randomBytes(32).toString('base64url');
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
   }
-  config.storageDir = path.resolve(config.storageDir || path.join(dataDir, 'files'));
+  const configuredStorageDir = String(config.storageDir || '').trim();
+  config.storageDir = isPackagedElectron && !path.isAbsolute(configuredStorageDir)
+    ? path.join(dataDir, 'files')
+    : path.resolve(configuredStorageDir || path.join(dataDir, 'files'));
   if (!config.sessionSecret || config.sessionSecret.length < 16) {
     const crypto = require('crypto');
     config.sessionSecret = crypto.randomBytes(32).toString('hex');
