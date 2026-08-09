@@ -26,7 +26,8 @@ function loadConfig() {
   if (!fs.existsSync(configPath)) {
     throw new Error(`尚未配置服务器，请先运行 npm run server:init。配置文件：${configPath}`);
   }
-  const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+  const rawConfig = fs.readFileSync(configPath, 'utf8').replace(/^\uFEFF/, '');
+  const config = JSON.parse(rawConfig);
   config.server = config.server || {};
   config.mysql = config.mysql || {};
   config.server.host = config.server.host || '0.0.0.0';

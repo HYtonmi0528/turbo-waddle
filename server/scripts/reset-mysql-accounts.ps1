@@ -42,7 +42,8 @@ FLUSH PRIVILEGES;
 $configPath = Join-Path $PSScriptRoot '..\..\server-data\config.json'
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 $config.mysql.password = $app
-$config | ConvertTo-Json -Depth 5 | Set-Content $configPath -Encoding UTF8
+$json = $config | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText($configPath, $json, [System.Text.UTF8Encoding]::new($false))
 $credentialPath = Join-Path (Split-Path $configPath) 'mysql-root-credentials.txt'
 @("MySQL root account: root", "MySQL root password: $root", "Reset time: $(Get-Date -Format o)") | Set-Content $credentialPath -Encoding UTF8
 Write-Host 'MySQL accounts reset completed. Existing database files were preserved. Run npm run server next.'
