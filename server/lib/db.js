@@ -102,6 +102,19 @@ async function ensureServerSchema() {
       INDEX idx_documents_name (original_name), INDEX idx_documents_creator (created_by, created_at)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
   } catch (_) {}
+
+  try {
+    await getPool().query(`CREATE TABLE IF NOT EXISTS external_rfq_submissions (
+      id CHAR(36) PRIMARY KEY, external_request_id VARCHAR(120), title VARCHAR(255) NOT NULL,
+      requester VARCHAR(120), country VARCHAR(120), client_name VARCHAR(180), request_date DATE,
+      deadline DATETIME(3), original_name VARCHAR(255) NOT NULL, storage_path VARCHAR(600) NOT NULL,
+      metadata_json JSON, parsed_items_json JSON,
+      status ENUM('received','accepted','rejected') NOT NULL DEFAULT 'received', received_at DATETIME(3) NOT NULL,
+      reviewed_at DATETIME(3), reviewed_by CHAR(36), rejection_reason TEXT, task_id CHAR(36),
+      UNIQUE KEY uq_external_request_id (external_request_id), INDEX idx_external_status_received (status, received_at),
+      INDEX idx_external_task (task_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+  } catch (_) {}
 }
 
 module.exports = { getPool, withTransaction, ensureServerSchema };
