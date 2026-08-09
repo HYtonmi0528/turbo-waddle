@@ -40,7 +40,8 @@ async function main() {
         password: appPassword,
         database: 'latic_rfq'
       },
-      storageDir
+      storageDir,
+      externalApiKey: crypto.randomBytes(32).toString('base64url')
     };
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
 
@@ -51,6 +52,7 @@ async function main() {
 
     console.log(`\n数据库初始化完成。`);
     console.log(`配置文件：${configPath}`);
+    console.log(`海外端接收密钥：${config.externalApiKey}`);
     console.log('下一步运行：npm run server');
   } finally {
     rl.close();

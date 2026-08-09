@@ -5,6 +5,8 @@ import AccountAdmin from './AccountAdmin';
 import RemoteTemplates from './RemoteTemplates';
 import DatabaseBrowser from './DatabaseBrowser';
 import Dashboard from './Dashboard';
+import ExternalInbox from './ExternalInbox';
+import DocumentCenter from './DocumentCenter';
 import appLogo from '../../../assets/app-logo.png';
 
 function cleanError(error) {
@@ -368,8 +370,10 @@ export default function CollaborationShell() {
         </div>
       </header>
       <nav className="collab-main-nav">
+        <button className={activeArea === 'documents' ? 'active' : ''} onClick={() => setActiveArea('documents')}>资料中心</button>
         <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>工作台</button>
         <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>共享询价任务</button>
+        {['admin', 'manager'].includes(user.role) && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>外部接收箱</button>}
         <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>我的账号模板</button>
         <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>Excel工具</button>
         {user.role === 'admin' && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>账号管理</button>}
@@ -378,6 +382,8 @@ export default function CollaborationShell() {
       <main className={`collab-shell-main ${activeArea === 'legacy' ? 'legacy-mode' : ''}`}>
         {activeArea === 'dashboard' && <Dashboard onNavigate={setActiveArea} />}
         {activeArea === 'tasks' && <CollaborationWorkspace user={user} onNotificationsChanged={loadNotifications} onOpenExcelTool={() => setActiveArea('legacy')} searchQuery={searchQuery} />}
+        {activeArea === 'external' && <ExternalInbox onChanged={loadNotifications} />}
+        {activeArea === 'documents' && <DocumentCenter />}
         {activeArea === 'templates' && <RemoteTemplates user={user} />}
         {activeArea === 'legacy' && <App />}
         {activeArea === 'users' && user.role === 'admin' && <AccountAdmin />}
