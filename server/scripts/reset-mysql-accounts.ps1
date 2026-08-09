@@ -16,7 +16,7 @@ Start-Sleep -Seconds 2
 
 $stdout = "$out\stdout.log"
 $stderr = "$out\stderr.log"
-$proc = Start-Process -FilePath $mysqld -ArgumentList @("--defaults-file=$defaults", '--skip-grant-tables', '--skip-networking=0', '--port=3307', '--console') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+$proc = Start-Process -FilePath $mysqld -ArgumentList @("--defaults-file=$defaults", '--skip-grant-tables', '--skip-networking=false', '--bind-address=127.0.0.1', '--port=3307', '--console') -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
 try {
   Start-Sleep -Seconds 6
   $sql = @"
