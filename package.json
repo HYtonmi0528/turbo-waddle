@@ -13,7 +13,7 @@
     "server": "node server/index.js",
     "server:init": "node server/scripts/initialize.js",
     "test:collaboration": "node --test tests/collaboration.test.js",
-    "build:renderer": "webpack --config webpack.renderer.config.js --mode production && node -e \"var fs=require('fs');var v=require('./package.json').version;var h=fs.readFileSync('dist/renderer/index.html','utf8');h=h.replace('</body>','<script src=\"/api.js?v='+v+'\"></'+'script></body>');fs.writeFileSync('dist/renderer/index.html',h);fs.copyFileSync('src/renderer/api-standalone.js','dist/renderer/api.js')\"",
+    "build:renderer": "webpack --config webpack.renderer.config.js --mode production && node scripts/build-web-assets.js",
     "dev:renderer": "webpack --config webpack.renderer.config.js --mode development --watch",
     "dev": "concurrently \"npm run dev:renderer\" \"wait-on dist/renderer/index.html && electron .\"",
     "build:win": "npm run build:renderer && electron-builder --win",
