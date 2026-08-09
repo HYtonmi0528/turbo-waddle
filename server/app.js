@@ -22,6 +22,11 @@ const { logger } = require('./lib/logger');
 const uuid = () => crypto.randomUUID();
 const now = () => new Date();
 const json = value => value == null ? null : JSON.stringify(value);
+const getCookie = (req, name) => {
+  const raw = String(req.headers.cookie || '');
+  const match = raw.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : '';
+};
 const parseJson = (value, fallback) => {
   if (value == null) return fallback;
   if (typeof value === 'object') return value;
@@ -183,6 +188,7 @@ function createApp() {
       [hashToken(token), user.id, expiresAt, now()]
     );
     req.session.userId = user.id;
+    res.cookie('latic_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
     const responseUser = { id: user.id, username: user.username, displayName: user.display_name, role: user.role };
     logger.info(`用户登录: ${user.display_name} (${user.role})`);
     res.json({ token, user: responseUser });
@@ -206,7 +212,7 @@ function createApp() {
       };
       return next();
     }
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '') || getCookie(req, 'latic_token');
     if (!token) return res.status(401).json({ message: '请先登录' });
     const [[user]] = await getPool().execute(
       `SELECT u.id, u.username, u.display_name displayName, u.role, u.status
@@ -245,9 +251,10 @@ function createApp() {
 
   app.get('/api/auth/me', authenticate, (req, res) => res.json({ user: req.user }));
   app.post('/api/auth/logout', authenticate, asyncRoute(async (req, res) => {
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '') || getCookie(req, 'latic_token');
     if (token) await getPool().execute('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
     req.session.destroy(() => {});
+    res.clearCookie('latic_token');
     res.json({ ok: true });
   }));
 
