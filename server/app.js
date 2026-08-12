@@ -154,18 +154,24 @@ function createApp() {
     const passwordData = await hashPassword(password);
     const id = uuid();
     const timestamp = now();
+    const initialStatus = safeRole === 'admin' ? 'active' : 'pending';
     try {
       await getPool().execute(
         `INSERT INTO users
          (id, username, display_name, password_hash, password_salt, role, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, 'pending', timestamp, timestamp]
+        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, initialStatus, timestamp, timestamp]
       );
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: '该账号已经存在' });
       throw error;
     }
-    res.status(201).json({ id, status: 'pending', message: '注册成功，请等待管理员启用账号' });
+    res.status(201).json({
+      id,
+      status: initialStatus,
+      role: safeRole,
+      message: safeRole === 'admin' ? '管理员注册成功，可以直接登录' : '注册成功，请等待管理员启用账号'
+    });
   }));
 
   app.post('/api/auth/login', asyncRoute(async (req, res) => {

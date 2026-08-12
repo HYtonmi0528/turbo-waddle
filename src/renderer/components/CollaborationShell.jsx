@@ -105,7 +105,7 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
         setMode('login');
       } else if (mode === 'register') {
         const result = await window.electronAPI.collaboration.register({ ...form, role: registerRole });
-        setMessage(result.message || '注册成功，请等待管理员启用账号。');
+        setMessage(result.message || (registerRole === 'admin' ? '管理员注册成功，请使用管理员入口登录。' : '注册成功，请等待管理员启用账号。'));
         setMode('login');
       } else {
         const result = await window.electronAPI.collaboration.login({
