@@ -22,7 +22,7 @@ async function main() {
     const appPassword = crypto.randomBytes(24).toString('base64url');
 
     const root = await mysql.createConnection({ host, port, user: rootUser, password: rootPassword });
-    await root.query('CREATE DATABASE IF NOT EXISTS `latic_rfq` CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci');
+    await root.query('CREATE DATABASE IF NOT EXISTS `latic_rfq` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
     await root.query("CREATE USER IF NOT EXISTS 'latic_rfq_app'@'localhost' IDENTIFIED BY ?", [appPassword]);
     await root.query("ALTER USER 'latic_rfq_app'@'localhost' IDENTIFIED BY ?", [appPassword]);
     await root.query("GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON `latic_rfq`.* TO 'latic_rfq_app'@'localhost'");
