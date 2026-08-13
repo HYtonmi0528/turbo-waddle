@@ -32,12 +32,14 @@ class CollaborationClient {
     return url;
   }
 
-  getState() {
-    return {
+  async getState() {
+    const state = {
       serverUrl: this.store.get('serverUrl', DEFAULT_SERVER_URL),
       user: this.store.get('user', null),
       hasSession: Boolean(this.store.get('token'))
     };
+    try { state.setup = await this.request('/api/setup/status', { auth: false, timeout: 8000 }); } catch (_) { state.setup = null; }
+    return state;
   }
 
   async request(apiPath, options = {}) {
