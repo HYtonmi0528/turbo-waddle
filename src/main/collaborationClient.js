@@ -2,10 +2,11 @@ const Store = require('electron-store');
 const fs = require('fs');
 const path = require('path');
 const { safeStorage } = require('electron');
+const DEFAULT_SERVER_URL = 'http://101.37.17.111:3210';
 
 class CollaborationClient {
   constructor() {
-    this.store = new Store({ name: 'collaboration-session' });
+    this.store = new Store({ name: 'collaboration-session', defaults: { serverUrl: DEFAULT_SERVER_URL } });
   }
 
   encrypt(text) {
@@ -33,14 +34,14 @@ class CollaborationClient {
 
   getState() {
     return {
-      serverUrl: this.store.get('serverUrl', ''),
+      serverUrl: this.store.get('serverUrl', DEFAULT_SERVER_URL),
       user: this.store.get('user', null),
       hasSession: Boolean(this.store.get('token'))
     };
   }
 
   async request(apiPath, options = {}) {
-    const baseUrl = this.store.get('serverUrl', '');
+    const baseUrl = this.store.get('serverUrl', DEFAULT_SERVER_URL) || DEFAULT_SERVER_URL;
     if (!baseUrl) throw new Error('请先配置服务器地址');
     const headers = { ...(options.headers || {}) };
     if (options.auth !== false) {
@@ -102,6 +103,10 @@ class CollaborationClient {
 
   async register(payload) {
     return this.request('/api/auth/register', { method: 'POST', body: payload, auth: false });
+  }
+
+  async registerRole(payload) {
+    return this.request('/api/auth/register/role', { method: 'POST', body: payload, auth: false });
   }
 
   async login(payload) {

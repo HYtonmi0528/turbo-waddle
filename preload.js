@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     restoreSession: () => ipcRenderer.invoke('collaboration:restoreSession'),
     setupAdmin: (payload) => ipcRenderer.invoke('collaboration:setupAdmin', payload),
     register: (payload) => ipcRenderer.invoke('collaboration:register', payload),
+    registerRole: (payload) => ipcRenderer.invoke('collaboration:registerRole', payload),
     login: (payload) => ipcRenderer.invoke('collaboration:login', payload),
     logout: () => ipcRenderer.invoke('collaboration:logout'),
     getRememberedLogin: () => ipcRenderer.invoke('collaboration:getRememberedLogin'),

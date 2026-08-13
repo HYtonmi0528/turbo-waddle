@@ -16,6 +16,7 @@ function cleanError(error) {
 }
 
 function ConnectionScreen({ initialUrl, onConnected }) {
+  const { language, setLanguage, t } = useI18n();
   const [serverUrl, setServerUrl] = useState(initialUrl || '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -37,6 +38,7 @@ function ConnectionScreen({ initialUrl, onConnected }) {
   return (
     <div className="collab-auth-page">
       <div className="collab-auth-card">
+        <label className="collab-auth-language"><span>{t('language')}</span><select value={language} onChange={e => setLanguage(e.target.value)}>{languageOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
         <h1>连接询价协作服务器</h1>
         <p>当前电脑作为服务器时使用本机地址；其他员工电脑填写服务器的局域网IP。</p>
@@ -66,7 +68,7 @@ function ConnectionScreen({ initialUrl, onConnected }) {
 }
 
 function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
-  const { t } = useI18n();
+  const { language, setLanguage, t } = useI18n();
   const getInitialMode = value => value?.initialized ? 'login' : 'choose-setup';
   const [mode, setMode] = useState(getInitialMode(setup));
   const [form, setForm] = useState({ username: '', displayName: '', password: '' });
@@ -75,6 +77,7 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
   const [message, setMessage] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [registerRole, setRegisterRole] = useState('viewer');
+  const [registrationToken, setRegistrationToken] = useState('');
 
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
 
@@ -103,7 +106,12 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
         setMessage('管理员创建成功，请使用管理员入口登录。');
         setMode('login');
       } else if (mode === 'register') {
-        const result = await window.electronAPI.collaboration.register({ ...form, role: registerRole });
+        const result = await window.electronAPI.collaboration.register({ ...form });
+        setRegistrationToken(result.registrationToken);
+        setMessage(result.message || t('chooseRole'));
+        setMode('register-role');
+      } else if (mode === 'register-role') {
+        const result = await window.electronAPI.collaboration.registerRole({ registrationToken, role: registerRole });
         setMessage(result.message || t('approval'));
         setMode('login');
       } else {
@@ -124,6 +132,7 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
   return (
     <div className="collab-auth-page">
       <div className="collab-auth-card collab-login-card">
+        <label className="collab-auth-language"><span>{t('language')}</span><select value={language} onChange={e => setLanguage(e.target.value)}>{languageOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
         <h1>{mode === 'setup' ? '创建初始管理员' : mode === 'choose-setup' ? '系统尚未初始化' : mode === 'waiting' ? '等待负责人初始化' : mode === 'register' ? '员工注册' : '登录询价协作系统'}</h1>
         {mode === 'choose-setup' && (
@@ -145,13 +154,13 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
         {mode !== 'waiting' && mode !== 'choose-setup' && <form onSubmit={submit}>
           {(mode === 'setup' || mode === 'register') && (
             <div className="form-group">
-              <label className="form-label" htmlFor="display-name">姓名</label>
+              <label className="form-label" htmlFor="display-name">{t('name')}</label>
               <input id="display-name" className="form-input" value={form.displayName} onChange={event => update('displayName', event.target.value)} required />
             </div>
           )}
-          {mode === 'register' && (
+          {mode === 'register-role' && (
             <div className="form-group">
-              <label className="form-label">角色</label>
+              <label className="form-label">{t('role')}</label>
               <select className="form-select" value={registerRole} onChange={e => setRegisterRole(e.target.value)}>
                 <option value="viewer">{t('overseas')}</option>
                 <option value="purchaser">{t('purchaser')}</option>
@@ -159,14 +168,14 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
               </select>
             </div>
           )}
-          <div className="form-group">
-            <label className="form-label" htmlFor="username">账号</label>
+          {mode !== 'register-role' && <div className="form-group">
+            <label className="form-label" htmlFor="username">{t('account')}</label>
             <input id="username" className="form-input" value={form.username} onChange={event => update('username', event.target.value)} required autoComplete="username" />
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="password">密码</label>
+          </div>}
+          {mode !== 'register-role' && <div className="form-group">
+            <label className="form-label" htmlFor="password">{t('password')}</label>
             <input id="password" className="form-input" type="password" minLength="8" value={form.password} onChange={event => update('password', event.target.value)} required autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
-          </div>
+          </div>}
           {mode === 'login' && (
             <label className="form-checkbox">
               <input type="checkbox" checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} />
@@ -234,9 +243,9 @@ export default function CollaborationShell() {
     let mounted = true;
     (async () => {
       try {
-        const setup = await window.electronAPI.collaboration.getState();
+    const setup = await window.electronAPI.collaboration.getState();
         if (!mounted) return;
-        setConnection({ setup });
+        setConnection({ setup: setup.setup || setup });
         const restoredUser = await window.electronAPI.collaboration.restoreSession();
         if (!mounted) return;
         if (restoredUser) {
@@ -310,7 +319,7 @@ export default function CollaborationShell() {
       firstNotificationLoad.current = true;
       setPhase('app');
       try { Notification.requestPermission(); } catch (_) {}
-    }} onReconfigure={() => setPhase('access')} onRefreshSetup={async () => {
+    }} onReconfigure={() => {}} onRefreshSetup={async () => {
       const result = await window.electronAPI.collaboration.getState();
       setConnection({ setup: result });
     }} />;

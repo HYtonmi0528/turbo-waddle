@@ -1739,3 +1739,5 @@ body {
 .document-actions .btn-ghost { border: 0; color: #8492a6; background: transparent; }
 @media (max-width: 760px) { .document-toolbar { grid-template-columns: 1fr; } .document-summary { flex-direction: column; gap: 5px; } .document-grid { grid-template-columns: 1fr; } }
 .collab-language-switcher{display:inline-flex;align-items:center;gap:6px;color:var(--muted,#718096);font-size:12px}.collab-language-switcher select{border:1px solid #d7dfeb;border-radius:6px;background:#fff;color:#24364b;padding:4px 6px;font-size:12px}
+.collab-auth-language{position:absolute;right:22px;top:18px;display:flex;align-items:center;gap:6px;color:#6b7c93;font-size:12px}.collab-auth-language select{border:1px solid #d7dfeb;border-radius:6px;background:#fff;padding:4px 6px;color:#24364b}.collab-auth-card{position:relative}
+.collab-auth-links button:last-child,.collab-waiting-setup button:last-child{display:none}

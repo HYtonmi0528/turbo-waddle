@@ -10,6 +10,7 @@
   });
   app.getVersion = () => request('/api/version').then(result => result.version || 'web').catch(() => 'web');
   collab.listExternalSubmissions = () => request('/api/external/rfqs');
+  collab.registerRole = payload => request('/api/auth/register/role', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   collab.acceptExternalSubmission = (id, payload = {}) => request(`/api/external/rfqs/${encodeURIComponent(id)}/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   collab.rejectExternalSubmission = (id, reason = '') => request(`/api/external/rfqs/${encodeURIComponent(id)}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
   collab.listDocuments = (params = {}) => {
