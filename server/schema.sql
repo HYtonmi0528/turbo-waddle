@@ -91,6 +91,8 @@ CREATE TABLE IF NOT EXISTS external_rfq_submissions (
   reviewed_by CHAR(36),
   rejection_reason TEXT,
   task_id CHAR(36),
+  created_by CHAR(36),
+  CONSTRAINT fk_external_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_external_reviewed_by FOREIGN KEY (reviewed_by) REFERENCES users(id),
   CONSTRAINT fk_external_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE SET NULL,
   UNIQUE KEY uq_external_request_id (external_request_id),
@@ -138,6 +140,7 @@ CREATE TABLE IF NOT EXISTS rfq_items (
   unit VARCHAR(80),
   product_code VARCHAR(120),
   ltc VARCHAR(120),
+  assigned_user_id CHAR(36),
   fob_usd DECIMAL(18,4),
   total_usd DECIMAL(18,4),
   total_rmb DECIMAL(18,4),
@@ -154,6 +157,7 @@ CREATE TABLE IF NOT EXISTS rfq_items (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_items_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE CASCADE,
   CONSTRAINT fk_items_editor FOREIGN KEY (updated_by) REFERENCES users(id),
+  CONSTRAINT fk_items_assignee FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL,
   UNIQUE KEY uq_task_line (task_id, line_no),
   INDEX idx_items_task (task_id, line_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getTask: (taskId) => ipcRenderer.invoke('collaboration:getTask', taskId),
     importTask: (metadata) => ipcRenderer.invoke('collaboration:importTask', metadata),
     listExternalSubmissions: () => ipcRenderer.invoke('collaboration:listExternalSubmissions'),
+    submitExternalRfq: (payload) => ipcRenderer.invoke('collaboration:submitExternalRfq', payload),
     acceptExternalSubmission: (id, payload) => ipcRenderer.invoke('collaboration:acceptExternalSubmission', id, payload),
     rejectExternalSubmission: (id, reason) => ipcRenderer.invoke('collaboration:rejectExternalSubmission', id, reason),
     listDocuments: (params = {}) => ipcRenderer.invoke('collaboration:listDocuments', params),
@@ -31,6 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     deleteDocument: (id) => ipcRenderer.invoke('collaboration:deleteDocument', id),
     updateTaskItem: (taskId, itemId, payload) =>
       ipcRenderer.invoke('collaboration:updateTaskItem', taskId, itemId, payload),
+    assignTaskItem: (taskId, itemId, assignedUserId) =>
+      ipcRenderer.invoke('collaboration:assignTaskItem', taskId, itemId, assignedUserId),
     uploadTaskAttachment: (taskId, itemId) =>
       ipcRenderer.invoke('collaboration:uploadTaskAttachment', taskId, itemId),
     uploadTaskAttachmentPath: (taskId, itemId, filePath) =>

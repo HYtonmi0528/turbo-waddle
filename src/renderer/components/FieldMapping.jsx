@@ -21,6 +21,8 @@ const normalizeFieldName = value => (value || '')
   .toLowerCase()
   .replace(/[\s/\\()（）【】\[\]：:、,_-]/g, '');
 
+const systemFieldKey = field => field?.key || field?.fieldKey || field?.field_key || '';
+
 const inferCustomFieldType = label => {
   const normalized = normalizeFieldName(label);
   if (/(图片|照片|图像|产品图|厂房图|image|photo)/i.test(normalized)) return 'image';
@@ -69,7 +71,7 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
       let fields = [];
       try {
         const structure = await window.electronAPI.templates.getStructure(tpl.id);
-        fields = structure?.columns?.map(col => col.header.replace(/\{\{|\}\}/g, '').trim()) || [];
+        fields = structure?.columns?.map(col => (col.header || col.name || col.label || '').replace(/\{\{|\}\}/g, '').trim()).filter(Boolean) || [];
       } catch (e) {
         // 如果获取结构失败，尝试从历史导入数据中获取
       }
@@ -83,10 +85,10 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
 
       // 构建映射表
       const mappingList = fields.map(field => {
-        const existing = existingMappings.find(m => m.template_field === field);
+        const existing = existingMappings.find(m => normalizeFieldName(m.template_field || m.templateField) === normalizeFieldName(field));
         return {
           templateField: field,
-          systemField: existing ? existing.system_field : ''
+          systemField: existing ? (existing.system_field || existing.systemField || '') : ''
         };
       });
 
@@ -132,24 +134,24 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
 
   const handleAutoMap = () => {
     const autoMapped = mappings.map(m => {
-      if (m.systemField) return m;
+      if (m.systemField && systemFields.some(field => systemFieldKey(field) === m.systemField)) return m;
 
       const normalizedField = normalizeFieldName(m.templateField);
       const aliasMatch = systemFields.find(sf =>
-        (FIELD_ALIASES[sf.key] || []).some(alias =>
+        (FIELD_ALIASES[systemFieldKey(sf)] || []).some(alias =>
           normalizedField.includes(normalizeFieldName(alias))
         )
       );
       const matched = aliasMatch || systemFields.find(sf => {
         const normalizedLabel = normalizeFieldName(sf.label);
-        const normalizedKey = normalizeFieldName(sf.key);
+        const normalizedKey = normalizeFieldName(systemFieldKey(sf));
         return normalizedLabel.includes(normalizedField) || normalizedField.includes(normalizedLabel) ||
           normalizedKey.includes(normalizedField) || normalizedField.includes(normalizedKey);
       });
 
       return {
         ...m,
-        systemField: matched ? matched.key : m.systemField
+        systemField: matched ? systemFieldKey(matched) : m.systemField
       };
     });
 
@@ -167,12 +169,12 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
       normalizeFieldName(templateField) === normalizeFieldName(field.label)
     );
     if (existingTemplateField) {
-      handleMappingChange(existingTemplateField, field.key);
+      handleMappingChange(existingTemplateField, systemFieldKey(field));
       showToast(`“${field.label}”已在当前模板中，请点击“保存映射”`);
       return;
     }
 
-    setAddingTemplateFieldKey(field.key);
+    setAddingTemplateFieldKey(systemFieldKey(field));
     try {
       const [structure, persistedMappings] = await Promise.all([
         window.electronAPI.templates.getStructure(selectedTemplate.id),
@@ -208,15 +210,15 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
 
       const nextMappings = (persistedMappings || [])
         .filter(mapping =>
-          normalizeFieldName(mapping.template_field) !== normalizeFieldName(templateFieldName)
+          normalizeFieldName(mapping.template_field || mapping.templateField) !== normalizeFieldName(templateFieldName)
         )
         .map(mapping => ({
-          templateField: mapping.template_field,
-          systemField: mapping.system_field
+          templateField: mapping.template_field || mapping.templateField,
+          systemField: mapping.system_field || mapping.systemField
         }));
       nextMappings.push({
         templateField: templateFieldName,
-        systemField: field.key
+        systemField: systemFieldKey(field)
       });
       await window.electronAPI.fieldMapping.save(selectedTemplate.id, nextMappings);
       await loadMappings(selectedTemplate);
@@ -254,11 +256,11 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
   };
 
   const handleCreateAndMap = async (mapping) => {
-    const sameNameField = systemFields.find(field =>
+      const sameNameField = systemFields.find(field =>
       normalizeFieldName(field.label) === normalizeFieldName(mapping.templateField)
     );
     if (sameNameField) {
-      handleMappingChange(mapping.templateField, sameNameField.key);
+      handleMappingChange(mapping.templateField, systemFieldKey(sameNameField));
       showToast(`已选择系统字段“${sameNameField.label}”，请保存映射`);
       return;
     }
@@ -270,7 +272,7 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
         dataType: inferCustomFieldType(mapping.templateField)
       });
       setSystemFields(prev => [...prev, created]);
-      handleMappingChange(mapping.templateField, created.key);
+      handleMappingChange(mapping.templateField, systemFieldKey(created));
       showToast(`已创建并选择“${created.label}”，请点击保存映射`);
     } catch (error) {
       showToast('创建自定义映射失败: ' + error.message, 'error');
@@ -281,13 +283,13 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
   };
 
   const handleDeleteSystemField = async (field) => {
-    if (mappings.some(mapping => mapping.systemField === field.key)) {
+    if (mappings.some(mapping => mapping.systemField === systemFieldKey(field))) {
       showToast('当前映射正在使用该字段，请先改选其他字段并保存映射', 'warning');
       return;
     }
     if (!confirm(`确定删除自定义系统字段“${field.label}”吗？`)) return;
     try {
-      await window.electronAPI.fieldMapping.deleteSystemField(field.key);
+      await window.electronAPI.fieldMapping.deleteSystemField(systemFieldKey(field));
       await loadSystemFields();
       showToast(`自定义系统字段“${field.label}”已删除`);
     } catch (error) {
@@ -361,7 +363,7 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
             <div className="flex-center gap-8" style={{ flexWrap: 'wrap', marginTop: '14px' }}>
               {systemFields.filter(field => field.isCustom).map(field => (
                 <span
-                  key={field.key}
+                  key={systemFieldKey(field)}
                   style={{
                     display: 'inline-flex',
                     alignItems: 'center',
@@ -389,7 +391,7 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
                         fontSize: '12px'
                       }}
                     >
-                      {addingTemplateFieldKey === field.key ? '添加中...' : '+ 加入当前模板'}
+                      {addingTemplateFieldKey === systemFieldKey(field) ? '添加中...' : '+ 加入当前模板'}
                     </button>
                   )}
                   <button
@@ -498,7 +500,7 @@ export default function FieldMapping({ templates, selectedTemplate: initialTempl
                             return Object.entries(categories).map(([cat, fields]) => (
                               <optgroup key={cat} label={cat}>
                                 {fields.map(sf => (
-                                  <option key={sf.key} value={sf.key}>
+                                  <option key={systemFieldKey(sf)} value={systemFieldKey(sf)}>
                                     {sf.label}
                                   </option>
                                 ))}

@@ -6,6 +6,7 @@ import RemoteTemplates from './RemoteTemplates';
 import DatabaseBrowser from './DatabaseBrowser';
 import Dashboard from './Dashboard';
 import ExternalInbox from './ExternalInbox';
+import OverseasRfqSubmit from './OverseasRfqSubmit';
 import DocumentCenter from './DocumentCenter';
 import appLogo from '../../../assets/app-logo.png';
 import { languageOptions, useI18n } from '../i18n';
@@ -316,6 +317,7 @@ export default function CollaborationShell() {
   if (phase === 'access') {
     return <AccessScreen setup={connection.setup} onLogin={nextUser => {
       setUser(nextUser);
+      setActiveArea(nextUser.role === 'viewer' ? 'submit' : 'dashboard');
       firstNotificationLoad.current = true;
       setPhase('app');
       try { Notification.requestPermission(); } catch (_) {}
@@ -375,18 +377,21 @@ export default function CollaborationShell() {
       </header>
       <nav className="collab-main-nav">
         {!isOverseas && <button className={activeArea === 'documents' ? 'active' : ''} onClick={() => setActiveArea('documents')}>{t('documents')}</button>}
-        <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>{t('dashboard')}</button>
-        <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>{t('tasks')}</button>
-        {isManagement && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>{t('external')}</button>}
+        {!isOverseas && <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>{t('dashboard')}</button>}
+        {!isOverseas && <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>{t('tasks')}</button>}
+        {isOverseas && <button className={activeArea === 'submit' ? 'active' : ''} onClick={() => setActiveArea('submit')}>{t('submitRfq')}</button>}
+        {isOverseas && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>{t('myRfqs')}</button>}
+        {user.role === 'manager' && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>{t('external')}</button>}
         {!isOverseas && <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>{t('templates')}</button>}
         {!isOverseas && <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>{t('excel')}</button>}
         {isManagement && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>{t('accounts')}</button>}
         {isManagement && <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>{t('database')}</button>}
       </nav>
       <main className={`collab-shell-main ${activeArea === 'legacy' ? 'legacy-mode' : ''}`}>
-        {activeArea === 'dashboard' && <Dashboard onNavigate={setActiveArea} />}
+        {activeArea === 'dashboard' && !isOverseas && <Dashboard onNavigate={setActiveArea} />}
         {activeArea === 'tasks' && <CollaborationWorkspace user={user} onNotificationsChanged={loadNotifications} onOpenExcelTool={() => setActiveArea('legacy')} searchQuery={searchQuery} />}
-        {activeArea === 'external' && <ExternalInbox onChanged={loadNotifications} />}
+        {activeArea === 'external' && <ExternalInbox user={user} onChanged={loadNotifications} />}
+        {activeArea === 'submit' && isOverseas && <OverseasRfqSubmit />}
         {activeArea === 'documents' && <DocumentCenter />}
         {activeArea === 'templates' && <RemoteTemplates user={user} />}
         {activeArea === 'legacy' && <App />}

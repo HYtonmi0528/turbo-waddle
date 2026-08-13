@@ -15,7 +15,7 @@ const {
 } = require('./lib/passwords');
 const { importRfqWorkbook } = require('./services/rfqImporter');
 const { exportCompletedRfq } = require('./services/rfqExporter');
-const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure } = require('./services/templateService');
+const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure, decodeUploadedName } = require('./services/templateService');
 const { getToday } = require('./services/exchangeRateService');
 const { logger } = require('./lib/logger');
 const packageVersion = require('../package.json').version;
@@ -38,6 +38,19 @@ const normalizeRole = value => {
   const aliases = { general_manager: 'admin', supervisor: 'manager', overseas_sales: 'viewer', overseas: 'viewer', viewer: 'viewer', manager: 'manager', purchaser: 'purchaser', admin: 'admin' };
   return aliases[String(value || '').trim().toLowerCase()] || 'viewer';
 };
+
+// Built-in fields are always available to mapping, even before a user adds custom fields.
+const BUILTIN_SYSTEM_FIELDS = [
+  ['supplierName', '供应商名称', '供应商信息', 'text'], ['productName', '产品名称', '产品信息', 'text'],
+  ['model', '型号/规格', '产品信息', 'text'], ['price', '价格/单价', '价格信息', 'number'],
+  ['cost', '成本', '价格信息', 'number'], ['profit', '利润', '价格信息', 'number'], ['profitRate', '利润率', '价格信息', 'number'],
+  ['totalPrice', '总价', '价格信息', 'number'], ['usdPrice', '美元单价', '价格信息', 'number'], ['usdTotalPrice', '美元总价', '价格信息', 'number'], ['usdCost', '美元成本', '价格信息', 'number'],
+  ['quantity', '数量', '交易信息', 'number'], ['deliveryTime', '交货期', '交易信息', 'text'],
+  ['paymentTerms', '付款方式', '交易信息', 'text'], ['afterSales', '售后政策', '售后信息', 'text'], ['warranty', '保修期', '售后信息', 'text'],
+  ['quoteNumber', '报价编号', '编号信息', 'text'], ['date', '日期', '编号信息', 'text'], ['contactPerson', '联系人', '联系信息', 'text'],
+  ['contactPhone', '联系电话', '联系信息', 'text'], ['companyAddress', '公司地址', '联系信息', 'text'], ['attachment', '附件/PDF文件', '附件资料', 'file'],
+  ['image', '图片/照片', '附件资料', 'image'], ['notes', '备注', '其他', 'text']
+].map(([key, label, category, dataType]) => ({ key, label, category, dataType, isBuiltin: true }));
 
 // 资料归档使用安全、可重复的目录规则：类型 / 日期 / 业务文件夹 / 文件。
 // 目录只在实际上传或生成文件时创建，不预先创建空目录。
@@ -384,14 +397,18 @@ function createApp() {
     });
   }));
 
-  app.get('/api/external/rfqs', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.get('/api/external/rfqs', authenticate, asyncRoute(async (req, res) => {
+    const ownOnly = req.user.role === 'viewer';
     const [rows] = await getPool().execute(
-      `SELECT id, external_request_id AS externalRequestId, title, requester, country,
-              client_name AS clientName, request_date AS requestDate, deadline,
-              original_name AS originalName, status, received_at AS receivedAt,
-              reviewed_at AS reviewedAt, reviewed_by AS reviewedBy, task_id AS taskId,
-              rejection_reason AS rejectionReason, parsed_items_json AS parsedItems
-       FROM external_rfq_submissions ORDER BY received_at DESC LIMIT 200`
+      `SELECT e.id, e.external_request_id AS externalRequestId, e.title, e.requester, e.country,
+              e.client_name AS clientName, e.request_date AS requestDate, e.deadline,
+              e.original_name AS originalName, e.status, e.received_at AS receivedAt,
+              e.reviewed_at AS reviewedAt, e.reviewed_by AS reviewedBy, e.task_id AS taskId,
+              e.rejection_reason AS rejectionReason, e.parsed_items_json AS parsedItems,
+              t.status AS taskStatus
+       FROM external_rfq_submissions e LEFT JOIN rfq_tasks t ON t.id = e.task_id
+       ${ownOnly ? 'WHERE e.created_by = ?' : ''} ORDER BY e.received_at DESC LIMIT 200`,
+      ownOnly ? [req.user.id] : []
     );
     res.json({ submissions: rows.map(row => ({
       ...row,
@@ -400,7 +417,7 @@ function createApp() {
     })) });
   }));
 
-  app.post('/api/external/rfqs/:id/reject', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.post('/api/external/rfqs/:id/reject', authenticate, requireRole('manager'), asyncRoute(async (req, res) => {
     const reason = String(req.body?.reason || '').trim();
     const result = await getPool().execute(
       `UPDATE external_rfq_submissions SET status = 'rejected', rejection_reason = ?, reviewed_at = ?, reviewed_by = ?
@@ -411,7 +428,7 @@ function createApp() {
     res.json({ ok: true, status: 'rejected' });
   }));
 
-  app.post('/api/external/rfqs/:id/accept', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.post('/api/external/rfqs/:id/accept', authenticate, requireRole('manager'), asyncRoute(async (req, res) => {
     const [[submission]] = await getPool().execute(
       'SELECT * FROM external_rfq_submissions WHERE id = ? AND status = \'received\'', [req.params.id]
     );
@@ -471,6 +488,42 @@ function createApp() {
       );
     });
     res.status(201).json({ id: taskId, taskNo, title, itemCount: items.length, status: 'published' });
+  }));
+
+  app.get('/api/external/rfqs/:id/result', authenticate, asyncRoute(async (req, res) => {
+    const ownershipClause = req.user.role === 'viewer' ? 'AND e.created_by = ?' : '';
+    const params = req.user.role === 'viewer' ? [req.params.id, req.user.id] : [req.params.id];
+    const [[record]] = await getPool().execute(
+      `SELECT e.title, e.original_name AS originalName, e.task_id AS taskId,
+              t.status AS taskStatus, t.source_storage_path AS sourcePath
+       FROM external_rfq_submissions e JOIN rfq_tasks t ON t.id = e.task_id
+       WHERE e.id = ? ${ownershipClause}`,
+      params
+    );
+    if (!record) return res.status(404).json({ message: '询价单或审核结果不存在' });
+    if (!['submitted', 'completed'].includes(record.taskStatus)) {
+      return res.status(409).json({ message: '询价结果尚未通过总经理审核' });
+    }
+    if (!record.sourcePath || !fs.existsSync(record.sourcePath)) {
+      return res.status(404).json({ message: '原始询价单文件不存在' });
+    }
+    const [items] = await getPool().execute(
+      `SELECT line_no AS lineNo, fob_usd AS fobUsd, total_rmb AS totalRmb, remarks,
+              attachments_json AS attachments, source_json AS source
+       FROM rfq_items WHERE task_id = ? ORDER BY line_no`,
+      [record.taskId]
+    );
+    const outputDir = path.join(config.storageDir, 'tasks', record.taskId, 'exports');
+    fs.mkdirSync(outputDir, { recursive: true });
+    const baseName = path.basename(record.originalName || '询价单.xlsx').replace(/\.xlsx$/i, '');
+    const downloadName = `已审核_${baseName}.xlsx`;
+    const outputPath = path.join(outputDir, `${Date.now()}-${downloadName}`);
+    await exportCompletedRfq(record.sourcePath, outputPath, items.map(item => ({
+      ...item,
+      attachments: parseJson(item.attachments, []),
+      source: parseJson(item.source, {})
+    })));
+    res.download(outputPath, downloadName);
   }));
 
   app.get('/api/users', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
@@ -538,7 +591,7 @@ function createApp() {
   }));
 
   async function createNotifications(connection, taskId, title, message) {
-    const [users] = await connection.query("SELECT id FROM users WHERE status = 'active'");
+    const [users] = await connection.query("SELECT id FROM users WHERE status = 'active' AND role = 'manager'");
     for (const user of users) {
       await connection.execute(
         `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
@@ -548,7 +601,7 @@ function createApp() {
     }
   }
 
-  app.post('/api/tasks/import', authenticate, requireRole('admin', 'manager'), upload.single('file'), asyncRoute(async (req, res) => {
+  app.post('/api/tasks/import', authenticate, requireRole('manager'), upload.single('file'), asyncRoute(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: '请选择Excel询价单' });
     let imported;
     try {
@@ -564,7 +617,7 @@ function createApp() {
     const sourcePath = path.join(taskDir, safeOriginalName);
     fs.renameSync(req.file.path, sourcePath);
     const taskNo = String(req.body.taskNo || `RFQ-${new Date().toISOString().slice(0, 10)}-${Date.now().toString().slice(-4)}`);
-    const title = String(req.body.title || safeOriginalName.replace(/\.xlsx$/i, ''));
+      const title = String(req.body.title || safeOriginalName.replace(/\.xlsx$/i, ''));
     const timestamp = now();
     const archiveDate = localDate(imported.metadata.requestDate || timestamp);
     const archiveFolder = archiveFolderName(archiveDate, title);
@@ -621,11 +674,17 @@ function createApp() {
               t.import_type AS importType, t.delivery_type AS deliveryType,
               t.status, t.assigned_user_ids AS assignedUserIds, t.updated_at AS updatedAt,
               COUNT(i.id) AS itemCount,
-              SUM(CASE WHEN i.fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS completedCount
+              SUM(CASE WHEN i.fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS completedCount,
+              MAX(CASE WHEN i.assigned_user_id = ? THEN 1 ELSE 0 END) AS itemAssigned
        FROM rfq_tasks t LEFT JOIN rfq_items i ON i.task_id = t.id
-       GROUP BY t.id ORDER BY t.updated_at DESC`
+       GROUP BY t.id ORDER BY t.updated_at DESC`,
+      [req.user.id]
     );
-    res.json({ tasks: rows.map(row => ({
+    const visibleRows = req.user.role === 'viewer' ? []
+      : req.user.role === 'purchaser' ? rows.filter(row => Number(row.itemAssigned) === 1)
+        : req.user.role === 'admin' ? rows.filter(row => ['review', 'submitted', 'completed'].includes(row.status))
+          : rows;
+    res.json({ tasks: visibleRows.map(row => ({
       ...row,
       assignedUserIds: parseJson(row.assignedUserIds, []),
       itemCount: Number(row.itemCount || 0),
@@ -669,6 +728,10 @@ function createApp() {
       [req.params.id]
     );
     if (!task) return res.status(404).json({ message: '任务不存在' });
+    if (req.user.role === 'viewer') return res.status(403).json({ message: '海外业务员不参与国内询价任务' });
+    if (req.user.role === 'admin' && !['review', 'submitted', 'completed'].includes(task.status)) {
+      return res.status(403).json({ message: '该询价单尚未提交总经理审核' });
+    }
     const [items] = await getPool().execute(
       `SELECT i.id, i.line_no AS lineNo, i.description, i.quantity, i.unit,
               i.product_code AS productCode, i.ltc, i.fob_usd AS fobUsd,
@@ -677,13 +740,21 @@ function createApp() {
               i.selected_supplier AS selectedSupplier, i.selected_quote_json AS selectedQuote,
               i.remarks, i.attachments_json AS attachments,
               i.source_json AS source, i.row_version AS rowVersion,
+              i.assigned_user_id AS assignedUserId, au.display_name AS assignedUserName,
               i.updated_at AS updatedAt, u.display_name AS updatedByName
        FROM rfq_items i LEFT JOIN users u ON u.id = i.updated_by
+       LEFT JOIN users au ON au.id = i.assigned_user_id
        WHERE i.task_id = ? ORDER BY i.line_no`,
       [req.params.id]
     );
+    if (req.user.role === 'purchaser' && !items.some(item => item.assignedUserId === req.user.id)) {
+      return res.status(403).json({ message: '该询价单没有分配给你负责的产品' });
+    }
     task.assignedUserIds = parseJson(task.assignedUserIds, []);
-    res.json({ task, items: items.map(item => ({
+    const visibleItems = req.user.role === 'purchaser'
+      ? items.filter(item => item.assignedUserId === req.user.id)
+      : items;
+    res.json({ task, items: visibleItems.map(item => ({
       ...item,
       attachments: parseJson(item.attachments, []).map(({ storagePath, ...attachment }) => attachment),
       selectedQuote: parseJson(item.selectedQuote, {}),
@@ -743,6 +814,30 @@ function createApp() {
     res.download(outputPath, downloadName);
   }));
 
+  app.patch('/api/tasks/:taskId/items/:itemId/assignee', authenticate, requireRole('manager'), asyncRoute(async (req, res) => {
+    const assignedUserId = req.body?.assignedUserId || null;
+    if (assignedUserId) {
+      const [[assignee]] = await getPool().execute(
+        "SELECT id, display_name AS displayName FROM users WHERE id = ? AND status = 'active' AND role = 'purchaser'",
+        [assignedUserId]
+      );
+      if (!assignee) return res.status(400).json({ message: '只能分配给已启用的采购专员' });
+    }
+    const [result] = await getPool().execute(
+      'UPDATE rfq_items SET assigned_user_id = ?, updated_by = ?, updated_at = ? WHERE id = ? AND task_id = ?',
+      [assignedUserId, req.user.id, now(), req.params.itemId, req.params.taskId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ message: '产品明细不存在' });
+    if (assignedUserId) {
+      await getPool().execute(
+        `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
+         VALUES (?, ?, 'assignment', '收到产品询价任务', '主管已分配一项产品给你', ?, 0, ?)`,
+        [uuid(), assignedUserId, req.params.taskId, now()]
+      );
+    }
+    res.json({ ok: true, assignedUserId });
+  }));
+
   app.patch('/api/tasks/:taskId/items/:itemId', authenticate, asyncRoute(async (req, res) => {
     const expectedVersion = Number(req.body?.rowVersion);
     const result = await withTransaction(async connection => {
@@ -751,6 +846,9 @@ function createApp() {
         [req.params.itemId, req.params.taskId]
       );
       if (!current) return { notFound: true };
+      if (req.user.role === 'viewer' || (req.user.role === 'purchaser' && current.assigned_user_id !== req.user.id)) {
+        return { forbidden: true };
+      }
       if (!Number.isInteger(expectedVersion) || current.row_version !== expectedVersion) {
         return { conflict: true, current };
       }
@@ -788,6 +886,7 @@ function createApp() {
         updatedAt: timestamp };
     });
     if (result.notFound) return res.status(404).json({ message: '产品明细不存在' });
+    if (result.forbidden) return res.status(403).json({ message: '该产品没有分配给你' });
     if (result.conflict) return res.status(409).json({
       message: '该行刚刚被其他员工修改，请刷新后比较数据',
       current: result.current
@@ -902,7 +1001,7 @@ function createApp() {
 
   app.post('/api/tasks/:id/submit-review', authenticate, asyncRoute(async (req, res) => {
     await getPool().execute('UPDATE rfq_tasks SET status = ?, updated_at = ? WHERE id = ?', ['review', now(), req.params.id]);
-    const [reviewers] = await getPool().query("SELECT id FROM users WHERE role IN ('admin','manager') AND status = 'active'");
+    const [reviewers] = await getPool().query("SELECT id FROM users WHERE role = 'admin' AND status = 'active'");
     for (const reviewer of reviewers) {
       await getPool().execute(
         `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
@@ -913,7 +1012,7 @@ function createApp() {
     res.json({ ok: true });
   }));
 
-  app.post('/api/tasks/:id/snapshots', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.post('/api/tasks/:id/snapshots', authenticate, requireRole('admin'), asyncRoute(async (req, res) => {
     const result = await withTransaction(async connection => {
       const [[task]] = await connection.execute('SELECT * FROM rfq_tasks WHERE id = ? FOR UPDATE', [req.params.id]);
       if (!task) return null;
@@ -931,6 +1030,17 @@ function createApp() {
       return { version };
     });
     if (!result) return res.status(404).json({ message: '任务不存在' });
+    const [[external]] = await getPool().execute(
+      'SELECT created_by AS createdBy, title FROM external_rfq_submissions WHERE task_id = ?',
+      [req.params.id]
+    );
+    if (external?.createdBy) {
+      await getPool().execute(
+        `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
+         VALUES (?, ?, 'rfq_result', '询价结果已通过审核', ?, ?, 0, ?)`,
+        [uuid(), external.createdBy, `${external.title} 已可下载`, req.params.id, now()]
+      );
+    }
     res.status(201).json(result);
   }));
 
@@ -1012,11 +1122,12 @@ function createApp() {
     const { structure, fields } = await parseTemplateStructure(storagePath);
     try { fs.unlinkSync(req.file.path); } catch (_) {}
     const timestamp = now();
-    const name = String(req.body.name || path.basename(req.file.originalname, '.xlsx'));
+    const originalName = decodeUploadedName(req.file.originalname || 'template.xlsx');
+    const name = decodeUploadedName(req.body.name || path.basename(originalName, path.extname(originalName))) || '未命名模板';
     await getPool().execute(
       `INSERT INTO user_templates (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, storage_path, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, req.user.id, name, req.body.type || '通用', req.body.description || null, req.file.originalname,
+      [id, req.user.id, name, req.body.type || '通用', req.body.description || null, originalName,
        json(structure), json(fields.map(f => ({ templateField: f, systemField: f }))), 0, storagePath, timestamp, timestamp]
     );
     res.json({ id, name, fields, structure });
@@ -1138,16 +1249,73 @@ function createApp() {
 
   app.get('/api/fields', authenticate, asyncRoute(async (req, res) => {
     const [rows] = await getPool().query('SELECT field_key AS `key`, label, category, data_type AS dataType FROM custom_system_fields ORDER BY label');
-    res.json({ fields: rows });
+    const custom = rows.map(row => ({ ...row, isBuiltin: false, isCustom: true }));
+    const keys = new Set(custom.map(row => row.key));
+    res.json({ fields: [...BUILTIN_SYSTEM_FIELDS.filter(field => !keys.has(field.key)).map(field => ({ ...field, isCustom: false })), ...custom] });
+  }));
+
+  // Signed-in overseas staff submit from the web page. Their account is recorded
+  // so that the same user can later see the returned result without domestic access.
+  app.post('/api/external/rfqs/submit', authenticate, requireRole('viewer'), upload.single('file'), asyncRoute(async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: '请选择 Excel 询价表' });
+    const submissionId = uuid();
+    const submissionDir = path.join(config.storageDir, 'external-rfqs', submissionId);
+    fs.mkdirSync(submissionDir, { recursive: true });
+    const decodedName = decodeUploadedName(req.file.originalname || '询价表.xlsx');
+    const safeOriginalName = path.basename(decodedName).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    const sourcePath = path.join(submissionDir, safeOriginalName);
+    fs.renameSync(req.file.path, sourcePath);
+    let imported;
+    try {
+      imported = await importRfqWorkbook(sourcePath);
+    } catch (error) {
+      try { fs.rmSync(submissionDir, { recursive: true, force: true }); } catch (_) {}
+      return res.status(422).json({ message: `无法识别询价表：${error.message}` });
+    }
+    const metadata = {
+      requester: req.body.requester || req.user.displayName,
+      country: req.body.country || imported.metadata.country || null,
+      client: req.body.client || imported.metadata.client || null,
+      requestDate: req.body.requestDate || imported.metadata.requestDate || null,
+      deadline: req.body.deadline || null,
+      sheetName: imported.sheetName,
+      headerRow: imported.headerRow,
+      tableCount: imported.tableCount,
+      tables: imported.tables,
+      sourceChannel: 'overseas_web'
+    };
+    const title = String(req.body.title || safeOriginalName.replace(/\.(?:xlsx|xls)$/i, ''));
+    await getPool().execute(
+      `INSERT INTO external_rfq_submissions
+       (id, title, requester, country, client_name, request_date, deadline, original_name,
+        storage_path, metadata_json, parsed_items_json, status, created_by, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?)`,
+      [submissionId, title, metadata.requester, metadata.country, metadata.client,
+        metadata.requestDate, metadata.deadline, safeOriginalName, sourcePath,
+        json(metadata), json(imported.items), req.user.id, now()]
+    );
+    const [managers] = await getPool().query("SELECT id FROM users WHERE role = 'manager' AND status = 'active'");
+    for (const manager of managers) {
+      await getPool().execute(
+        `INSERT INTO notifications (id, user_id, type, title, message, is_read, created_at)
+         VALUES (?, ?, 'external_rfq', '收到海外询价单', ?, 0, ?)`,
+        [uuid(), manager.id, `${title}，共 ${imported.items.length} 项产品`, now()]
+      );
+    }
+    res.status(201).json({ id: submissionId, title, itemCount: imported.items.length, status: 'received' });
   }));
   app.post('/api/fields', authenticate, asyncRoute(async (req, res) => {
-    const { key, label, category, dataType } = req.body || {};
-    if (!key || !label) return res.status(400).json({ message: '字段标识和名称不能为空' });
+    const { key: requestedKey, label, category, dataType } = req.body || {};
+    if (!label) return res.status(400).json({ message: '字段名称不能为空' });
+    const baseKey = String(requestedKey || label).trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fff]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || `custom_${Date.now()}`;
+    let key = baseKey;
+    let suffix = 2;
+    while (BUILTIN_SYSTEM_FIELDS.some(field => field.key === key)) key = `${baseKey}_${suffix++}`;
     await getPool().execute(
       'INSERT INTO custom_system_fields (field_key, label, category, data_type, created_by, created_at) VALUES (?,?,?,?,?,?)',
       [key, label, category || '自定义', dataType || 'text', req.user.id, now()]
     );
-    res.json({ ok: true });
+    res.status(201).json({ ok: true, field: { key, label, category: category || '自定义', dataType: dataType || 'text', isBuiltin: false, isCustom: true } });
   }));
   app.delete('/api/fields/:key', authenticate, asyncRoute(async (req, res) => {
     await getPool().execute('DELETE FROM custom_system_fields WHERE field_key = ?', [req.params.key]);

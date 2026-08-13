@@ -62,14 +62,15 @@ test('completed task exports FOB, RMB total and notes next to the original Mexic
     remarks: '供应商测试备注',
     attachments: []
   }]);
-  assert.deepEqual(result.columns, { fobUsd: 17, totalRmb: 18, remarks: 19 });
+  // The three output columns must immediately follow the last real source header.
+  assert.deepEqual(result.columns, { fobUsd: 16, totalRmb: 17, remarks: 18 });
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(outputPath);
   const sheet = workbook.getWorksheet('Sheet1');
-  assert.equal(sheet.getCell('Q7').value, 'FOB');
-  assert.equal(sheet.getCell('R7').value, '总价');
-  assert.equal(sheet.getCell('S7').value, '备注');
-  assert.equal(sheet.getCell('R8').value, 947.1);
-  assert.equal(sheet.getCell('S8').value, '供应商测试备注');
-  assert.ok(Math.abs(sheet.getCell('Q8').value - 115.6057) < 0.001);
+  assert.equal(sheet.getCell('P7').value, 'FOB');
+  assert.equal(sheet.getCell('Q7').value, '总价');
+  assert.equal(sheet.getCell('R7').value, '备注');
+  assert.equal(sheet.getCell('Q8').value, 947.1);
+  assert.equal(sheet.getCell('R8').value, '供应商测试备注');
+  assert.ok(Math.abs(sheet.getCell('P8').value - 115.6057) < 0.001);
 });

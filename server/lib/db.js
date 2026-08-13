@@ -40,7 +40,8 @@ async function ensureServerSchema() {
     ['exchange_rate', 'DECIMAL(18,6) NULL AFTER total_rmb'],
     ['invoice_type', 'VARCHAR(30) NULL AFTER exchange_rate'],
     ['selected_supplier', 'VARCHAR(255) NULL AFTER invoice_type'],
-    ['selected_quote_json', 'JSON NULL AFTER selected_supplier']
+    ['selected_quote_json', 'JSON NULL AFTER selected_supplier'],
+    ['assigned_user_id', 'CHAR(36) NULL AFTER ltc']
   ];
   const [rows] = await getPool().query(
     `SELECT COLUMN_NAME FROM information_schema.COLUMNS
@@ -52,6 +53,16 @@ async function ensureServerSchema() {
       await getPool().query(`ALTER TABLE rfq_items ADD COLUMN \`${column}\` ${definition}`);
     }
   }
+
+  try {
+    const [externalColumns] = await getPool().query(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS
+       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'external_rfq_submissions'`
+    );
+    if (!externalColumns.some(row => row.COLUMN_NAME === 'created_by')) {
+      await getPool().query('ALTER TABLE external_rfq_submissions ADD COLUMN created_by CHAR(36) NULL AFTER task_id');
+    }
+  } catch (_) {}
 
   try {
     const [[colInfo]] = await getPool().query(
@@ -152,6 +163,7 @@ async function ensureServerSchema() {
       metadata_json JSON, parsed_items_json JSON,
       status ENUM('received','accepted','rejected') NOT NULL DEFAULT 'received', received_at DATETIME(3) NOT NULL,
       reviewed_at DATETIME(3), reviewed_by CHAR(36), rejection_reason TEXT, task_id CHAR(36),
+      created_by CHAR(36),
       UNIQUE KEY uq_external_request_id (external_request_id), INDEX idx_external_status_received (status, received_at),
       INDEX idx_external_task (task_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
