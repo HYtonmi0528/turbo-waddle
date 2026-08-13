@@ -1738,3 +1738,4 @@ body {
 .document-actions { display: flex; flex-direction: column; gap: 6px; align-items: stretch; flex: 0 0 auto; }
 .document-actions .btn-ghost { border: 0; color: #8492a6; background: transparent; }
 @media (max-width: 760px) { .document-toolbar { grid-template-columns: 1fr; } .document-summary { flex-direction: column; gap: 5px; } .document-grid { grid-template-columns: 1fr; } }
+.collab-language-switcher{display:inline-flex;align-items:center;gap:6px;color:var(--muted,#718096);font-size:12px}.collab-language-switcher select{border:1px solid #d7dfeb;border-radius:6px;background:#fff;color:#24364b;padding:4px 6px;font-size:12px}

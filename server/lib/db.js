@@ -64,6 +64,21 @@ async function ensureServerSchema() {
   } catch (_) {}
 
   try {
+    const [userColumns] = await getPool().query(`SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users'`);
+    const existingUserColumns = new Set(userColumns.map(row => row.COLUMN_NAME));
+    for (const [column, definition] of [
+      ['requested_role', 'VARCHAR(40) NULL AFTER status'],
+      ['department', 'VARCHAR(120) NULL AFTER requested_role'],
+      ['phone', 'VARCHAR(40) NULL AFTER department'],
+      ['language', "VARCHAR(10) NOT NULL DEFAULT 'zh-CN' AFTER phone"],
+      ['approved_by', 'CHAR(36) NULL AFTER language'],
+      ['approved_at', 'DATETIME(3) NULL AFTER approved_by']
+    ]) {
+      if (!existingUserColumns.has(column)) await getPool().query(`ALTER TABLE users ADD COLUMN \`${column}\` ${definition}`);
+    }
+  } catch (_) {}
+
+  try {
     await getPool().query(`CREATE TABLE IF NOT EXISTS app_settings (
       user_id CHAR(36) NOT NULL, setting_key VARCHAR(120) NOT NULL, setting_value TEXT,
       updated_at DATETIME(3) NOT NULL, PRIMARY KEY (user_id, setting_key)

@@ -141,7 +141,7 @@ function TaskList({ tasks, users, user, onSelect, onRefresh, searchQuery, batchM
       <div className="collab-task-filters">
         <button className={filter === 'active' ? 'active' : ''} onClick={() => setFilter('active')}>进行中的任务</button>
         <button className={filter === 'mine' ? 'active' : ''} onClick={() => setFilter('mine')}>重点分配给我</button>
-        {user.role === 'admin' && <button className={filter === 'review' ? 'active' : ''} onClick={() => setFilter('review')}>等待我审核</button>}
+        {['admin', 'manager'].includes(user.role) && <button className={filter === 'review' ? 'active' : ''} onClick={() => setFilter('review')}>等待我审核</button>}
         <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>全部</button>
       </div>
       {visible.length === 0 ? <div className="card empty-state"><div className="empty-state-icon">📋</div><div className="empty-state-text">当前没有符合条件的询价任务</div></div> : (
@@ -362,7 +362,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
     <div className="collab-task-detail">
       <div className="collab-detail-toolbar"><button className="btn btn-outline" onClick={onBack}>← 返回任务列表</button><div><span className={`collab-status status-${task.status}`}>{STATUS_LABELS[task.status] || task.status}</span><span className="text-muted text-sm"> 当前版本 V{task.currentVersion}</span></div></div>
       <section className="card collab-task-summary">
-        <div className="card-header"><div><div className="text-sm text-muted">{task.taskNo}</div><h1>{task.title}</h1></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={() => window.electronAPI.collaboration.downloadTaskSource(task)}>下载原始询价单</button><button className="btn btn-outline" onClick={downloadCsv}>导出CSV</button>{user.role === 'admin' && <button className="btn btn-primary" onClick={exportCompleted}>导出已填写询价单</button>}</div></div>
+        <div className="card-header"><div><div className="text-sm text-muted">{task.taskNo}</div><h1>{task.title}</h1></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={() => window.electronAPI.collaboration.downloadTaskSource(task)}>下载原始询价单</button><button className="btn btn-outline" onClick={downloadCsv}>导出CSV</button>{['admin', 'manager', 'purchaser'].includes(user.role) && <button className="btn btn-primary" onClick={exportCompleted}>导出已填写询价单</button>}</div></div>
         <div className="collab-summary-grid"><div><span>请求人</span><strong>{task.requester || '未填写'}</strong></div><div><span>国家</span><strong>{task.country || '未填写'}</strong></div><div><span>客户</span><strong>{task.clientName || '未填写'}</strong></div><div><span>申请日期</span><strong>{formatDate(task.requestDate)}</strong></div><div><span>进口方式</span><strong>{task.importType || '未填写'}</strong></div><div><span>交付方式</span><strong>{task.deliveryType || '未填写'}</strong></div><div><span>付款方式</span><strong>{task.paymentType || '未填写'}</strong></div><div><span>截止时间</span><strong>{formatDate(task.deadline, true)}</strong></div></div>
       </section>
       <div className="collab-detail-tabs"><button className={tab === 'entry' ? 'active' : ''} onClick={() => setTab('entry')}>询价填写</button><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>修改记录</button><button className={tab === 'comments' ? 'active' : ''} onClick={() => { setTab('comments'); loadComments(); }}>讨论</button></div>
@@ -387,7 +387,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
             const ranked = sortCandidatesForTarget({ ...(target?.source || {}), description: target?.description, code: target?.productCode }, candidates);
             return <div className="collab-candidate-picker"><div className="card-header"><div><h3>为第{target?.lineNo}项勾选供应商</h3><p className="text-muted text-sm">数据来自“{selectedQuoteSet?.name}”，按型号和描述优先排序。</p></div><button className="btn btn-outline btn-sm" onClick={() => setSelectingItemId('')}>关闭</button></div><div className="table-container"><table className="data-table"><thead><tr><th>选择</th><th>供应商</th><th>型号</th><th>含税运人民币</th><th>自动FOB</th><th>备注</th></tr></thead><tbody>{ranked.map(({ candidate, score }, idx) => { const rmb = candidateRmbValue(candidate, selectedQuoteSet); const fob = rmb / (numberValue(exchangeRate) || 7.25) / (invoiceType === 'special' ? 1.13 : 1); const priceRank = rmb > 0 ? ranked.filter(c => candidateRmbValue(c.candidate, selectedQuoteSet) > 0).sort((a, b) => candidateRmbValue(a.candidate, selectedQuoteSet) - candidateRmbValue(b.candidate, selectedQuoteSet)).findIndex(c => c.candidate === candidate) + 1 : null; return <tr key={`${candidate._quoteEntryId}-${candidate._quoteItemIndex}`}><td><button className="btn btn-primary btn-sm" disabled={savingId === target?.id} onClick={() => applyCandidate(target, candidate)}>✓ 选用</button></td><td>{candidate.supplierName || '—'}{priceRank > 0 && <span className="rfq-price-rank" style={{marginLeft:6,color:priceRank===1?'#27AE60':priceRank===2?'#F39C12':'#888',fontSize:11,fontWeight:600}}>{priceRank===1?'最低':priceRank===2?'第2':'#'+priceRank}</span>}</td><td>{candidate.model || candidate.reference || '—'}</td><td>¥{rmb.toFixed(2)}</td><td>${fob.toFixed(2)}</td><td>{candidate.notes || candidate.afterSales || '—'}{score > 0 && <span className="rfq-match-score matched"> {score}分</span>}</td></tr>; })}</tbody></table></div></div>;
           })()}
-          <div className="collab-review-actions"><span>提交后仍可继续修改；正式提交会保留不可覆盖的历史快照。</span>{user.role === 'admin' ? <button className="btn btn-success btn-lg" onClick={snapshot}>审核通过并保存提交快照</button> : <button className="btn btn-success btn-lg" onClick={submitReview}>提交负责人审核</button>}</div>
+          <div className="collab-review-actions"><span>提交后仍可继续修改；正式提交会保留不可覆盖的历史快照。</span>{['admin', 'manager'].includes(user.role) ? <button className="btn btn-success btn-lg" onClick={snapshot}>审核通过并保存提交快照</button> : <button className="btn btn-success btn-lg" onClick={submitReview}>提交负责人审核</button>}</div>
         </section>
       ) : (
         tab === 'history' && <section className="card"><div className="card-header"><h2 className="card-title">修改记录</h2><button className="btn btn-outline" onClick={loadAudit}>刷新</button></div>{audit.length === 0 ? <div className="empty-state"><div className="empty-state-text">暂无修改记录</div></div> : <div className="collab-audit-list">{audit.map(record => <div key={record.id}><time>{formatDate(record.createdAt, true)}</time><strong>{record.userName || '系统'}</strong><span>{record.action === 'update' ? '修改了询价数据' : '导入了询价任务'}</span></div>)}</div>}</section>
@@ -441,7 +441,7 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
   const statusCounts = { drafts: tasks.filter(t => t.status === 'draft').length, published: tasks.filter(t => t.status === 'published').length, inProgress: tasks.filter(t => t.status === 'in_progress').length, review: tasks.filter(t => t.status === 'review').length, completed: tasks.filter(t => t.status === 'completed').length };
   return (
     <div>
-      {user.role === 'admin' && <div className="collab-admin-action-bar"><div><strong>管理员工作台</strong><span>当前共有 {activeTasks} 个未完成任务</span></div><button className="btn btn-primary btn-lg" onClick={() => setShowImport(true)}>＋ 上传并下发询价单</button></div>}
+      {['admin', 'manager'].includes(user.role) && <div className="collab-admin-action-bar"><div><strong>管理工作台</strong><span>当前共有 {activeTasks} 个未完成任务</span></div><button className="btn btn-primary btn-lg" onClick={() => setShowImport(true)}>＋ 上传并下发询价单</button></div>}
       {stats && (
         <div className="collab-stats-bar">
           {statusCounts.drafts > 0 && <span>草稿 {statusCounts.drafts}</span>}
@@ -454,7 +454,7 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
       {message && <div className="collab-form-success">{message}</div>}
       {error && <div className="collab-form-error">{error}</div>}
       {loading ? <div className="collab-loading">正在读取共享任务…</div> : <TaskList tasks={tasks} users={users} user={user} onSelect={setSelectedTaskId} onRefresh={load} searchQuery={searchQuery} batchMode={batchMode} selectedIds={selectedIds} onToggleSelect={id => { const s = new Set(selectedIds); if (s.has(id)) s.delete(id); else s.add(id); setSelectedIds(s); }} />}
-      {user.role === 'admin' && !loading && (
+      {['admin', 'manager'].includes(user.role) && !loading && (
         <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
           <button className="btn btn-outline btn-sm" onClick={() => { setBatchMode(!batchMode); setSelectedIds(new Set()); }}>{batchMode ? '退出批量' : '批量操作'}</button>
         </div>

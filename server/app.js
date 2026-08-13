@@ -34,6 +34,11 @@ const parseJson = (value, fallback) => {
   try { return JSON.parse(value); } catch (_) { return fallback; }
 };
 
+const normalizeRole = value => {
+  const aliases = { general_manager: 'admin', supervisor: 'manager', overseas_sales: 'viewer', overseas: 'viewer', viewer: 'viewer', manager: 'manager', purchaser: 'purchaser', admin: 'admin' };
+  return aliases[String(value || '').trim().toLowerCase()] || 'viewer';
+};
+
 // 资料归档使用安全、可重复的目录规则：类型 / 日期 / 业务文件夹 / 文件。
 // 目录只在实际上传或生成文件时创建，不预先创建空目录。
 const localDate = value => {
@@ -174,27 +179,27 @@ function createApp() {
     const timestamp = now();
     await getPool().execute(
       `INSERT INTO users
-       (id, username, display_name, password_hash, password_salt, role, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'admin', 'active', ?, ?)`,
+       (id, username, display_name, password_hash, password_salt, role, status, requested_role, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'admin', 'active', 'admin', ?, ?)`,
       [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, timestamp, timestamp]
     );
     res.status(201).json({ id, username, displayName, role: 'admin' });
   }));
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
-    const { username, displayName, password, role } = req.body || {};
+    const { username, displayName, password, role, department, phone } = req.body || {};
     if (!username || !displayName) return res.status(400).json({ message: '请输入账号和姓名' });
-    const safeRole = ['admin', 'manager', 'purchaser', 'viewer'].includes(role) ? role : 'viewer';
+    const safeRole = normalizeRole(role);
     const passwordData = await hashPassword(password);
     const id = uuid();
     const timestamp = now();
-    const initialStatus = safeRole === 'admin' ? 'active' : 'pending';
+    const initialStatus = 'pending';
     try {
       await getPool().execute(
         `INSERT INTO users
-         (id, username, display_name, password_hash, password_salt, role, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, initialStatus, timestamp, timestamp]
+         (id, username, display_name, password_hash, password_salt, role, status, requested_role, department, phone, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, initialStatus, safeRole, department?.trim() || null, phone?.trim() || null, timestamp, timestamp]
       );
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: '该账号已经存在' });
@@ -204,21 +209,21 @@ function createApp() {
       id,
       status: initialStatus,
       role: safeRole,
-      message: safeRole === 'admin' ? '管理员注册成功，可以直接登录' : '注册成功，请等待管理员启用账号'
+      message: '注册申请已提交，请等待负责人审核后登录。'
     });
   }));
 
   app.post('/api/auth/login', asyncRoute(async (req, res) => {
-    const { username, password, entrance } = req.body || {};
+    const { username, password } = req.body || {};
     const [[user]] = await getPool().execute('SELECT * FROM users WHERE username = ?', [username || '']);
     if (!user || !(await verifyPassword(password || '', user.password_salt, user.password_hash))) {
       return res.status(401).json({ message: '账号或密码错误' });
     }
     if (user.status !== 'active') return res.status(403).json({ message: '账号尚未启用或已被停用' });
-    if (entrance === 'admin' && !['admin', 'manager'].includes(user.role)) {
+    if (false && !['admin', 'manager'].includes(user.role)) {
       return res.status(403).json({ message: '该账号没有管理权限' });
     }
-    if (entrance === 'employee' && ['admin', 'manager'].includes(user.role)) {
+    if (false && ['admin', 'manager'].includes(user.role)) {
       return res.status(403).json({ message: '请从管理员入口登录' });
     }
     const token = createSessionToken();
@@ -452,9 +457,9 @@ function createApp() {
     res.status(201).json({ id: taskId, taskNo, title, itemCount: items.length, status: 'published' });
   }));
 
-  app.get('/api/users', authenticate, asyncRoute(async (req, res) => {
+  app.get('/api/users', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const [rows] = await getPool().query(
-      `SELECT id, username, display_name AS displayName, role, status, created_at AS createdAt
+       `SELECT id, username, display_name AS displayName, role, requested_role AS requestedRole, department, phone, language, status, created_at AS createdAt
        FROM users ORDER BY role, display_name`
     );
     res.json({ users: rows });
@@ -465,10 +470,10 @@ function createApp() {
     await getPool().execute('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', [status, now(), req.params.id]);
     res.json({ ok: true });
   }));
-  app.patch('/api/users/:id/role', authenticate, requireRole('admin'), asyncRoute(async (req, res) => {
+  app.patch('/api/users/:id/role', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const role = ['admin', 'manager', 'purchaser', 'viewer'].includes(req.body?.role) ? req.body.role : null;
     if (!role) return res.status(400).json({ message: '无效的角色，可选：admin, manager, purchaser, viewer' });
-    await getPool().execute('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, now(), req.params.id]);
+    await getPool().execute('UPDATE users SET role = ?, requested_role = ?, updated_at = ? WHERE id = ?', [role, role, now(), req.params.id]);
     logger.info(`用户角色变更: ${req.params.id} -> ${role} by ${req.user.displayName}`);
     res.json({ ok: true });
   }));
@@ -681,7 +686,7 @@ function createApp() {
     res.download(task.source_storage_path, task.source_original_name);
   }));
 
-  app.get('/api/tasks/:id/export', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.get('/api/tasks/:id/export', authenticate, requireRole('admin', 'manager', 'purchaser'), asyncRoute(async (req, res) => {
     const [[task]] = await getPool().execute(
       'SELECT id, title, request_date, created_at, source_original_name, source_storage_path FROM rfq_tasks WHERE id = ?',
       [req.params.id]
@@ -1269,7 +1274,7 @@ function createApp() {
   app.delete('/api/documents/:id', authenticate, asyncRoute(async (req, res) => {
     const [[document]] = await getPool().execute('SELECT id, storage_path, created_by FROM documents WHERE id = ? AND status = \'active\'', [req.params.id]);
     if (!document) return res.status(404).json({ message: '资料不存在' });
-    if (document.created_by !== req.user.id && !['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ message: '无权删除此资料' });
+    if (document.created_by !== req.user.id && !['admin', 'manager', 'purchaser'].includes(req.user.role)) return res.status(403).json({ message: '无权删除此资料' });
     await getPool().execute('UPDATE documents SET status = \'deleted\', deleted_at = ?, updated_at = ? WHERE id = ?', [now(), now(), req.params.id]);
     res.json({ ok: true });
   }));
@@ -1294,7 +1299,7 @@ function createApp() {
     res.status(201).json({ id, content, userName: req.user.displayName, createdAt: now().toISOString() });
   }));
 
-  app.get('/api/db/tables', authenticate, asyncRoute(async (req, res) => {
+  app.get('/api/db/tables', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const [tables] = await getPool().query(
       `SELECT TABLE_NAME AS name, TABLE_ROWS AS rowCount
        FROM information_schema.TABLES
@@ -1303,7 +1308,7 @@ function createApp() {
     );
     res.json(tables.map(t => ({ name: t.name, rowCount: Number(t.rowCount || 0) })));
   }));
-  app.get('/api/db/table/:name', authenticate, asyncRoute(async (req, res) => {
+  app.get('/api/db/table/:name', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const page = parseInt(req.query.page) || 0;
     const pageSize = Math.min(parseInt(req.query.pageSize) || 100, 1000);
     const [columns] = await getPool().query(
@@ -1319,7 +1324,7 @@ function createApp() {
     );
     res.json({ columns: colNames, rows, total: Number(count) });
   }));
-  app.post('/api/db/query', authenticate, asyncRoute(async (req, res) => {
+  app.post('/api/db/query', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const sql = (req.body.query || '').trim();
     if (!/^\s*SELECT/i.test(sql)) return res.status(400).json({ message: '仅支持 SELECT 查询' });
     const [rows] = await getPool().query(sql);

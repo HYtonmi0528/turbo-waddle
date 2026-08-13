@@ -8,6 +8,7 @@ import Dashboard from './Dashboard';
 import ExternalInbox from './ExternalInbox';
 import DocumentCenter from './DocumentCenter';
 import appLogo from '../../../assets/app-logo.png';
+import { languageOptions, useI18n } from '../i18n';
 
 function cleanError(error) {
   return String(error?.message || error || '操作失败')
@@ -65,7 +66,7 @@ function ConnectionScreen({ initialUrl, onConnected }) {
 }
 
 function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
-  const [entrance, setEntrance] = useState('employee');
+  const { t } = useI18n();
   const getInitialMode = value => value?.initialized ? 'login' : 'choose-setup';
   const [mode, setMode] = useState(getInitialMode(setup));
   const [form, setForm] = useState({ username: '', displayName: '', password: '' });
@@ -83,7 +84,6 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
       if (saved) {
         setForm(current => ({ ...current, username: saved.username }));
         setRememberMe(true);
-        if (saved.entrance) setEntrance(saved.entrance);
       }
     })();
   }, []);
@@ -101,17 +101,15 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
       if (mode === 'setup') {
         await window.electronAPI.collaboration.setupAdmin(form);
         setMessage('管理员创建成功，请使用管理员入口登录。');
-        setEntrance('admin');
         setMode('login');
       } else if (mode === 'register') {
         const result = await window.electronAPI.collaboration.register({ ...form, role: registerRole });
-        setMessage(result.message || (registerRole === 'admin' ? '管理员注册成功，请使用管理员入口登录。' : '注册成功，请等待管理员启用账号。'));
+        setMessage(result.message || t('approval'));
         setMode('login');
       } else {
         const result = await window.electronAPI.collaboration.login({
           username: form.username,
           password: form.password,
-          entrance,
           remember: rememberMe
         });
         onLogin(result.user);
@@ -144,12 +142,6 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
             <button type="button" className="btn btn-outline collab-full-button" onClick={onReconfigure}>← 返回服务器连接</button>
           </div>
         )}
-        {mode === 'login' && (
-          <div className="collab-entrance-switch">
-            <button type="button" className={entrance === 'employee' ? 'active' : ''} onClick={() => setEntrance('employee')}>普通员工入口</button>
-            <button type="button" className={entrance === 'admin' ? 'active' : ''} onClick={() => setEntrance('admin')}>管理员入口</button>
-          </div>
-        )}
         {mode !== 'waiting' && mode !== 'choose-setup' && <form onSubmit={submit}>
           {(mode === 'setup' || mode === 'register') && (
             <div className="form-group">
@@ -161,10 +153,9 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
             <div className="form-group">
               <label className="form-label">角色</label>
               <select className="form-select" value={registerRole} onChange={e => setRegisterRole(e.target.value)}>
-                <option value="viewer">查看者（只读）</option>
-                <option value="purchaser">采购员（录入数据）</option>
-                <option value="manager">经理（审批+管理）</option>
-                <option value="admin">管理员（全部权限）</option>
+                <option value="viewer">{t('overseas')}</option>
+                <option value="purchaser">{t('purchaser')}</option>
+                <option value="manager">{t('manager')}</option>
               </select>
             </div>
           )}
@@ -226,6 +217,7 @@ function playNotificationSound() {
 }
 
 export default function CollaborationShell() {
+  const { language, setLanguage, t } = useI18n();
   const [showSplash, setShowSplash] = useState(true);
   const [phase, setPhase] = useState('loading');
   const [connection, setConnection] = useState({ serverUrl: '', setup: null });
@@ -325,6 +317,8 @@ export default function CollaborationShell() {
   }
 
   const unreadCount = notifications.filter(item => !item.isRead).length;
+  const isManagement = ['admin', 'manager'].includes(user.role);
+  const isOverseas = user.role === 'viewer';
 
   const handleSearch = async (val) => {
     setSearchQuery(val);
@@ -365,19 +359,20 @@ export default function CollaborationShell() {
         </div>
         <div className="collab-user-actions">
           <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
-          <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : user.role === 'manager' ? '经理' : user.role === 'purchaser' ? '采购员' : '查看者'}</span></div>
+          <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? t('admin') : user.role === 'manager' ? t('manager') : user.role === 'purchaser' ? t('purchaser') : t('overseas')}</span></div>
+          <label className="collab-language-switcher"><span>{t('language')}</span><select value={language} onChange={e => setLanguage(e.target.value)}>{languageOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <button className="btn btn-outline btn-sm" onClick={logout}>退出</button>
         </div>
       </header>
       <nav className="collab-main-nav">
-        <button className={activeArea === 'documents' ? 'active' : ''} onClick={() => setActiveArea('documents')}>资料中心</button>
-        <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>工作台</button>
-        <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>共享询价任务</button>
-        {['admin', 'manager'].includes(user.role) && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>外部接收箱</button>}
-        <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>我的账号模板</button>
-        <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>Excel工具</button>
-        {user.role === 'admin' && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>账号管理</button>}
-        <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>数据库</button>
+        {!isOverseas && <button className={activeArea === 'documents' ? 'active' : ''} onClick={() => setActiveArea('documents')}>{t('documents')}</button>}
+        <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>{t('dashboard')}</button>
+        <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>{t('tasks')}</button>
+        {isManagement && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>{t('external')}</button>}
+        {!isOverseas && <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>{t('templates')}</button>}
+        {!isOverseas && <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>{t('excel')}</button>}
+        {isManagement && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>{t('accounts')}</button>}
+        {isManagement && <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>{t('database')}</button>}
       </nav>
       <main className={`collab-shell-main ${activeArea === 'legacy' ? 'legacy-mode' : ''}`}>
         {activeArea === 'dashboard' && <Dashboard onNavigate={setActiveArea} />}
@@ -386,8 +381,8 @@ export default function CollaborationShell() {
         {activeArea === 'documents' && <DocumentCenter />}
         {activeArea === 'templates' && <RemoteTemplates user={user} />}
         {activeArea === 'legacy' && <App />}
-        {activeArea === 'users' && user.role === 'admin' && <AccountAdmin />}
-        {activeArea === 'database' && <DatabaseBrowser />}
+        {activeArea === 'users' && isManagement && <AccountAdmin />}
+        {activeArea === 'database' && isManagement && <DatabaseBrowser />}
         {activeArea === 'notifications' && (
           <section className="card collab-notification-panel">
             <div className="card-header"><h2 className="card-title">通知中心</h2><button className="btn btn-outline btn-sm" onClick={loadNotifications}>刷新</button></div>

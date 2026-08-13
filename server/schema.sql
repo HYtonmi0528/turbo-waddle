@@ -6,6 +6,12 @@ CREATE TABLE IF NOT EXISTS users (
   password_salt CHAR(32) NOT NULL,
   role ENUM('admin', 'manager', 'purchaser', 'viewer') NOT NULL DEFAULT 'viewer',
   status ENUM('pending', 'active', 'disabled') NOT NULL DEFAULT 'pending',
+  requested_role VARCHAR(40),
+  department VARCHAR(120),
+  phone VARCHAR(40),
+  language VARCHAR(10) NOT NULL DEFAULT 'zh-CN',
+  approved_by CHAR(36),
+  approved_at DATETIME(3),
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
