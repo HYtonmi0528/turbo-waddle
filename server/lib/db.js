@@ -68,7 +68,8 @@ async function ensureServerSchema() {
     const existingUserColumns = new Set(userColumns.map(row => row.COLUMN_NAME));
     for (const [column, definition] of [
       ['requested_role', 'VARCHAR(40) NULL AFTER status'],
-      ['department', 'VARCHAR(120) NULL AFTER requested_role'],
+      ['registration_token_hash', 'CHAR(64) NULL AFTER requested_role'],
+      ['department', 'VARCHAR(120) NULL AFTER registration_token_hash'],
       ['phone', 'VARCHAR(40) NULL AFTER department'],
       ['language', "VARCHAR(10) NOT NULL DEFAULT 'zh-CN' AFTER phone"],
       ['approved_by', 'CHAR(36) NULL AFTER language'],

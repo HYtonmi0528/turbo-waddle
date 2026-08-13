@@ -113,6 +113,9 @@ function registerIpcHandlers() {
   ipcMain.handle('collaboration:register', async (event, payload) => {
     return collaborationClient.register(payload);
   });
+  ipcMain.handle('collaboration:registerRole', async (event, payload) => {
+    return collaborationClient.registerRole(payload);
+  });
   ipcMain.handle('collaboration:login', async (event, payload) => {
     return collaborationClient.login(payload);
   });

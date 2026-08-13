@@ -187,9 +187,11 @@ function createApp() {
   }));
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
-    const { username, displayName, password, role, department, phone } = req.body || {};
+    const { username, displayName, password, department, phone } = req.body || {};
     if (!username || !displayName) return res.status(400).json({ message: '请输入账号和姓名' });
-    const safeRole = normalizeRole(role);
+    const registrationToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashToken(registrationToken);
+    const safeRole = 'viewer';
     const passwordData = await hashPassword(password);
     const id = uuid();
     const timestamp = now();
@@ -197,9 +199,9 @@ function createApp() {
     try {
       await getPool().execute(
         `INSERT INTO users
-         (id, username, display_name, password_hash, password_salt, role, status, requested_role, department, phone, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, initialStatus, safeRole, department?.trim() || null, phone?.trim() || null, timestamp, timestamp]
+         (id, username, display_name, password_hash, password_salt, role, status, requested_role, registration_token_hash, department, phone, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, initialStatus, tokenHash, department?.trim() || null, phone?.trim() || null, timestamp, timestamp]
       );
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: '该账号已经存在' });
@@ -208,9 +210,23 @@ function createApp() {
     res.status(201).json({
       id,
       status: initialStatus,
-      role: safeRole,
-      message: '注册申请已提交，请等待负责人审核后登录。'
+      role: null,
+      registrationToken,
+      message: '账号创建成功，请继续选择职位。'
     });
+  }));
+
+  app.post('/api/auth/register/role', asyncRoute(async (req, res) => {
+    const { registrationToken, role, department, phone } = req.body || {};
+    if (!registrationToken) return res.status(400).json({ message: '注册流程已失效，请重新注册' });
+    const safeRole = normalizeRole(role);
+    const [result] = await getPool().execute(
+      `UPDATE users SET role = ?, requested_role = ?, department = COALESCE(?, department), phone = COALESCE(?, phone), registration_token_hash = NULL, updated_at = ?
+       WHERE registration_token_hash = ? AND status = 'pending'`,
+      [safeRole, safeRole, department?.trim() || null, phone?.trim() || null, now(), hashToken(registrationToken)]
+    );
+    if (!result.affectedRows) return res.status(400).json({ message: '注册流程已失效，请重新注册' });
+    res.json({ status: 'pending', role: safeRole, message: '职位申请已提交，请等待负责人审核后登录。' });
   }));
 
   app.post('/api/auth/login', asyncRoute(async (req, res) => {

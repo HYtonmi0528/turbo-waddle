@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS users (
   role ENUM('admin', 'manager', 'purchaser', 'viewer') NOT NULL DEFAULT 'viewer',
   status ENUM('pending', 'active', 'disabled') NOT NULL DEFAULT 'pending',
   requested_role VARCHAR(40),
+  registration_token_hash CHAR(64),
   department VARCHAR(120),
   phone VARCHAR(40),
   language VARCHAR(10) NOT NULL DEFAULT 'zh-CN',
