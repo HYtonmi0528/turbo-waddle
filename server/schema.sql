@@ -99,9 +99,13 @@ CREATE TABLE IF NOT EXISTS documents (
   mime_type VARCHAR(160),
   file_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
   file_ext VARCHAR(20),
-  category ENUM('rfq', 'quote', 'supplier', 'product', 'attachment', 'template', 'other') NOT NULL DEFAULT 'other',
+  category VARCHAR(80) NOT NULL DEFAULT 'other',
   entity_type VARCHAR(60),
   entity_id CHAR(36),
+  archive_category VARCHAR(80),
+  archive_date DATE,
+  archive_folder VARCHAR(255),
+  archive_name VARCHAR(255),
   visibility ENUM('all', 'department', 'private', 'admin') NOT NULL DEFAULT 'all',
   version_no INT NOT NULL DEFAULT 1,
   checksum CHAR(64),
@@ -113,6 +117,7 @@ CREATE TABLE IF NOT EXISTS documents (
   CONSTRAINT fk_documents_creator FOREIGN KEY (created_by) REFERENCES users(id),
   INDEX idx_documents_search (status, category, created_at),
   INDEX idx_documents_entity (entity_type, entity_id, version_no),
+  INDEX idx_documents_archive (archive_category, archive_date, archive_folder),
   INDEX idx_documents_name (original_name),
   INDEX idx_documents_creator (created_by, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

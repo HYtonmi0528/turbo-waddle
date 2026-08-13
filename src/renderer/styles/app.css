@@ -1725,6 +1725,10 @@ body {
 .document-center-header h1 { margin: 4px 0 6px; color: var(--latic-navy, #10233f); }
 .document-toolbar { display: grid; grid-template-columns: minmax(240px, 1fr) 180px auto; gap: 12px; align-items: center; }
 .document-summary { display: flex; justify-content: space-between; font-size: 13px; padding: 0 4px; }
+.document-archive-tree { display: flex; flex-direction: column; gap: 12px; }
+.document-archive-group { border: 1px solid #dfe7f1; border-radius: 14px; background: #f8fbff; padding: 10px; }
+.document-archive-folder { width: 100%; display: flex; justify-content: space-between; gap: 12px; border: 0; background: transparent; color: #17365d; padding: 8px 10px 12px; font-size: 14px; font-weight: 650; cursor: pointer; text-align: left; }
+.document-archive-folder span:last-child { color: #7b8ba1; font-size: 12px; font-weight: 500; }
 .document-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
 .document-card { display: flex; align-items: center; gap: 14px; padding: 18px; background: #fff; border: 1px solid #e4eaf2; border-radius: 16px; box-shadow: 0 8px 24px rgba(21, 43, 72, .06); min-width: 0; }
 .document-icon { width: 46px; height: 46px; border-radius: 13px; background: linear-gradient(135deg, #fff1f4, #e8f3ff); display: grid; place-items: center; font-size: 23px; flex: 0 0 auto; }

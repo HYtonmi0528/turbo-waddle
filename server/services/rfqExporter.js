@@ -44,6 +44,15 @@ function lastMeaningfulColumn(sheet) {
   return maxColumn;
 }
 
+// 多个表格/大类共用一个工作表时，只按当前表头行计算追加列。
+function lastMeaningfulHeaderColumn(row) {
+  let maxColumn = 1;
+  row.eachCell({ includeEmpty: false }, (cell, colNo) => {
+    if (normalize(cellScalar(cell))) maxColumn = Math.max(maxColumn, colNo);
+  });
+  return maxColumn;
+}
+
 function lastPopulatedColumn(row, maximum) {
   for (let colNo = maximum; colNo >= 1; colNo -= 1) {
     if (normalize(cellScalar(row.getCell(colNo)))) return colNo;
@@ -69,7 +78,7 @@ function findHeaderColumn(sheet, headerRow, aliases) {
 
 function ensureExportColumns(sheet, headerRow) {
   const columns = {};
-  const meaningfulColumn = lastMeaningfulColumn(sheet);
+  const meaningfulColumn = lastMeaningfulHeaderColumn(sheet.getRow(headerRow));
   let nextColumn = meaningfulColumn + 1;
   const header = sheet.getRow(headerRow);
   const headerStyleColumn = lastStyledColumn(header, lastPopulatedColumn(header, meaningfulColumn));

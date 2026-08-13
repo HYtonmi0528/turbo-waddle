@@ -1,0 +1,16 @@
+服务器更新以后只需要执行一条命令：
+
+cd ~/apps/latic-rfq && bash scripts/update-server.sh
+
+等命令显示“更新完成”后，浏览器按 Ctrl+F5 刷新即可。
+
+第一次使用前请确认：
+1. 服务器项目目录是 ~/apps/latic-rfq。
+2. PM2 服务名称是 latic-rfq。
+3. 当前代码分支是 agent/document-center。
+
+脚本会自动完成：拉取最新版、安装依赖、构建网页、升级数据库结构、重启服务和检查 3210 端口。
+不会删除数据库和 server-data 文件。
+
+如果提示没有执行权限，先执行一次：
+chmod +x scripts/update-server.sh

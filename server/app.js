@@ -18,6 +18,7 @@ const { exportCompletedRfq } = require('./services/rfqExporter');
 const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure } = require('./services/templateService');
 const { getToday } = require('./services/exchangeRateService');
 const { logger } = require('./lib/logger');
+const packageVersion = require('../package.json').version;
 
 const uuid = () => crypto.randomUUID();
 const now = () => new Date();
@@ -33,17 +34,49 @@ const parseJson = (value, fallback) => {
   try { return JSON.parse(value); } catch (_) { return fallback; }
 };
 
+// 资料归档使用安全、可重复的目录规则：类型 / 日期 / 业务文件夹 / 文件。
+// 目录只在实际上传或生成文件时创建，不预先创建空目录。
+const localDate = value => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  const pad = number => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+const safeArchivePart = value => String(value || 'unnamed')
+  .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim().slice(0, 220) || 'unnamed';
+const archiveFolderName = (date, title) => `${String(date || localDate()).replace(/-/g, '').slice(4, 8)}-${safeArchivePart(title)}`;
+const archiveCategoryLabel = value => {
+  const raw = String(value || '').trim();
+  const aliases = { rfq: '询价表', quote: '报价/对比表', supplier: '供应商储备', product: '产品代码表', attachment: '任务附件', template: '模板', other: '其他资料' };
+  return aliases[raw.toLowerCase()] || raw || '其他资料';
+};
+const inferArchiveCategory = (fileName, requested) => {
+  if (String(requested || '').trim()) return archiveCategoryLabel(requested);
+  const name = String(fileName || '').toLowerCase();
+  if (/rfq|solicitud|precio|inquiry|询价/.test(name)) return '询价表';
+  if (/supplier|vendor|供应商/.test(name)) return '供应商储备';
+  if (/product.?code|sku|产品代码|代码表/.test(name)) return '产品代码表';
+  if (/template|模板/.test(name)) return '模板';
+  return '其他资料';
+};
+const archiveStoragePath = (root, category, date, folder, name) => path.join(
+  root, 'documents', 'archive', safeArchivePart(category), String(date).replace(/-/g, ''),
+  safeArchivePart(folder), safeArchivePart(name)
+);
+
 async function insertDocument(executor, data) {
   const id = data.id || uuid();
   const timestamp = data.createdAt || now();
   await executor.execute(
     `INSERT INTO documents
       (id, original_name, storage_path, mime_type, file_size, file_ext, category,
-       entity_type, entity_id, visibility, version_no, checksum, status, created_by, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+       entity_type, entity_id, archive_category, archive_date, archive_folder, archive_name,
+       visibility, version_no, checksum, status, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
     [id, data.originalName, data.storagePath, data.mimeType || null, Number(data.fileSize || 0),
       data.fileExt || path.extname(data.originalName || '').slice(1).toLowerCase() || null,
       data.category || 'other', data.entityType || null, data.entityId || null,
+      data.archiveCategory || null, data.archiveDate || null, data.archiveFolder || null, data.archiveName || data.originalName || null,
       data.visibility || 'all', Number(data.versionNo || 1), data.checksum || null,
       data.createdBy, timestamp, timestamp]
   );
@@ -124,6 +157,7 @@ function createApp() {
     await getPool().query('SELECT 1');
     res.json({ ok: true, service: 'LATIC RFQ Server', time: new Date().toISOString() });
   }));
+  app.get('/api/version', (req, res) => res.json({ version: packageVersion }));
 
   app.get('/api/setup/status', asyncRoute(async (req, res) => {
     const [[row]] = await getPool().query('SELECT COUNT(*) AS count FROM users');
@@ -511,6 +545,11 @@ function createApp() {
     const taskNo = String(req.body.taskNo || `RFQ-${new Date().toISOString().slice(0, 10)}-${Date.now().toString().slice(-4)}`);
     const title = String(req.body.title || safeOriginalName.replace(/\.xlsx$/i, ''));
     const timestamp = now();
+    const archiveDate = localDate(imported.metadata.requestDate || timestamp);
+    const archiveFolder = archiveFolderName(archiveDate, title);
+    const archiveSourcePath = archiveStoragePath(config.storageDir, '询价表', archiveDate, archiveFolder, safeOriginalName);
+    fs.mkdirSync(path.dirname(archiveSourcePath), { recursive: true });
+    fs.copyFileSync(sourcePath, archiveSourcePath);
     await withTransaction(async connection => {
       await connection.execute(
         `INSERT INTO rfq_tasks
@@ -537,10 +576,12 @@ function createApp() {
         );
       }
       await insertDocument(connection, {
-        originalName: safeOriginalName, storagePath: sourcePath,
+        originalName: safeOriginalName, storagePath: archiveSourcePath,
         mimeType: req.file.mimetype || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        fileSize: fs.statSync(sourcePath).size, category: 'rfq', entityType: 'rfq_task',
-        entityId: taskId, createdBy: req.user.id, visibility: 'all'
+        fileSize: fs.statSync(sourcePath).size, category: '询价表', entityType: 'rfq_task',
+        entityId: taskId, archiveCategory: '询价表',
+        archiveDate, archiveFolder,
+        archiveName: safeOriginalName, createdBy: req.user.id, visibility: 'all'
       });
       await createNotifications(connection, taskId, '收到新询价任务', `${title}，共 ${imported.items.length} 项产品`);
       await connection.execute(
@@ -642,7 +683,7 @@ function createApp() {
 
   app.get('/api/tasks/:id/export', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const [[task]] = await getPool().execute(
-      'SELECT id, source_original_name, source_storage_path FROM rfq_tasks WHERE id = ?',
+      'SELECT id, title, request_date, created_at, source_original_name, source_storage_path FROM rfq_tasks WHERE id = ?',
       [req.params.id]
     );
     if (!task || !task.source_storage_path || !fs.existsSync(task.source_storage_path)) {
@@ -667,8 +708,11 @@ function createApp() {
     await insertDocument(getPool(), {
       originalName: downloadName, storagePath: outputPath,
       mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      fileSize: fs.statSync(outputPath).size, category: 'quote', entityType: 'rfq_task',
-      entityId: task.id, createdBy: req.user.id, visibility: 'all'
+      fileSize: fs.statSync(outputPath).size, category: '询价表', entityType: 'rfq_task',
+      entityId: task.id, archiveCategory: '询价表',
+      archiveDate: localDate(task.request_date || task.created_at),
+      archiveFolder: archiveFolderName(localDate(task.request_date || task.created_at), task.title),
+      archiveName: downloadName, createdBy: req.user.id, visibility: 'all'
     });
     await getPool().execute(
       `INSERT INTO audit_logs (entity_type, entity_id, action, after_json, user_id, created_at)
@@ -1004,10 +1048,23 @@ function createApp() {
   app.post('/api/excel/generate', authenticate, asyncRoute(async (req, res) => {
     const { templateId, batches, options } = req.body || {};
     if (!templateId) return res.status(400).json({ message: '请先选择模板' });
-    const outputPath = await generateExcel(templateId, batches, options);
-    res.download(outputPath, `生成表格_${new Date().toISOString().slice(0,10)}.xlsx`, () => {
-      try { fs.unlinkSync(outputPath); } catch (_) {}
+    const generatedPath = await generateExcel(templateId, batches, options);
+    const downloadName = path.basename(String(req.body.fileName || req.body.savePath || `generated_${localDate()}.xlsx`)).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    const archiveDate = localDate(req.body.archiveDate || now());
+    const archiveCategory = inferArchiveCategory(downloadName, req.body.archiveCategory || 'quote');
+    const archiveFolder = archiveFolderName(archiveDate, req.body.archiveFolder || downloadName.replace(/\.xlsx$/i, ''));
+    const outputPath = archiveStoragePath(config.storageDir, archiveCategory, archiveDate, archiveFolder, downloadName);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.copyFileSync(generatedPath, outputPath);
+    try { fs.unlinkSync(generatedPath); } catch (_) {}
+    await insertDocument(getPool(), {
+      originalName: downloadName, storagePath: outputPath,
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      fileSize: fs.statSync(outputPath).size, category: archiveCategory,
+      archiveCategory, archiveDate, archiveFolder, archiveName: downloadName,
+      entityType: 'generated_excel', createdBy: req.user.id, visibility: 'all'
     });
+    res.download(outputPath, downloadName);
   }));
 
   app.get('/api/data/entries', authenticate, asyncRoute(async (req, res) => {
@@ -1159,10 +1216,12 @@ function createApp() {
     const where = ["d.status = 'active'", "(d.visibility = 'all' OR d.created_by = ? OR ? IN ('admin','manager'))"];
     const params = [req.user.id, req.user.role];
     if (query) { where.push('(d.original_name LIKE ? OR d.entity_type LIKE ?)'); params.push(`%${query}%`, `%${query}%`); }
-    if (category && category !== 'all') { where.push('d.category = ?'); params.push(category); }
+    if (category && category !== 'all') { where.push('(d.category = ? OR d.archive_category = ?)'); params.push(category, category); }
     const [rows] = await getPool().execute(
       `SELECT d.id, d.original_name AS originalName, d.mime_type AS mimeType, d.file_size AS fileSize,
               d.file_ext AS fileExt, d.category, d.entity_type AS entityType, d.entity_id AS entityId,
+              d.archive_category AS archiveCategory, d.archive_date AS archiveDate,
+              d.archive_folder AS archiveFolder, d.archive_name AS archiveName,
               d.visibility, d.version_no AS versionNo, d.created_at AS createdAt,
               u.display_name AS createdByName
        FROM documents d JOIN users u ON u.id = d.created_by
@@ -1176,20 +1235,23 @@ function createApp() {
   app.post('/api/documents', authenticate, upload.single('file'), asyncRoute(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: '请选择要归档的文件' });
     const documentId = uuid();
-    const documentDir = path.join(config.storageDir, 'documents', documentId);
-    fs.mkdirSync(documentDir, { recursive: true });
+    const archiveDate = localDate(req.body.archiveDate || now());
+    const archiveCategory = inferArchiveCategory(req.file.originalname, req.body.archiveCategory || req.body.category);
+    const archiveFolder = archiveFolderName(archiveDate, req.body.archiveFolder || req.file.originalname);
     const safeName = path.basename(req.file.originalname || '资料').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
-    const targetPath = path.join(documentDir, safeName);
+    const targetPath = archiveStoragePath(config.storageDir, archiveCategory, archiveDate, archiveFolder, safeName);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
     fs.renameSync(req.file.path, targetPath);
     const hash = crypto.createHash('sha256').update(fs.readFileSync(targetPath)).digest('hex');
     await insertDocument(getPool(), {
       id: documentId, originalName: safeName, storagePath: targetPath, mimeType: req.file.mimetype,
-      fileSize: req.file.size, category: String(req.body.category || 'other'),
+      fileSize: req.file.size, category: archiveCategory,
+      archiveCategory, archiveDate, archiveFolder, archiveName: safeName,
       entityType: String(req.body.entityType || '') || null, entityId: String(req.body.entityId || '') || null,
       visibility: ['all', 'private', 'department', 'admin'].includes(req.body.visibility) ? req.body.visibility : 'all',
       checksum: hash, createdBy: req.user.id
     });
-    res.status(201).json({ id: documentId, originalName: safeName, category: req.body.category || 'other' });
+    res.status(201).json({ id: documentId, originalName: safeName, category: archiveCategory, archiveCategory, archiveDate, archiveFolder });
   }));
 
   app.get('/api/documents/:id/download', authenticate, asyncRoute(async (req, res) => {

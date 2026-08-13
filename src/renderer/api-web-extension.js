@@ -2,11 +2,13 @@
 (function () {
   const api = window.electronAPI = window.electronAPI || {};
   const collab = api.collaboration = api.collaboration || {};
+  const app = api.app = api.app || {};
   const request = (url, options) => fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})).then(async response => {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.message || `请求失败（${response.status}）`);
     return body;
   });
+  app.getVersion = () => request('/api/version').then(result => result.version || 'web').catch(() => 'web');
   collab.listExternalSubmissions = () => request('/api/external/rfqs');
   collab.acceptExternalSubmission = (id, payload = {}) => request(`/api/external/rfqs/${encodeURIComponent(id)}/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   collab.rejectExternalSubmission = (id, reason = '') => request(`/api/external/rfqs/${encodeURIComponent(id)}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
