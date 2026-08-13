@@ -24,7 +24,13 @@ async function listTemplates(userId) {
      FROM user_templates WHERE owner_id = ? OR is_shared = 1 ORDER BY updated_at DESC`,
     [userId]
   );
-  return rows.map(row => ({ ...row, structure: parseJson(row.structure), mappings: parseJson(row.mappings) }));
+  return rows.map(row => ({
+    ...row,
+    name: decodeUploadedName(row.name) || '未命名模板',
+    originalName: decodeUploadedName(row.originalName),
+    structure: parseJson(row.structure),
+    mappings: parseJson(row.mappings)
+  }));
 }
 
 async function deleteTemplate(userId, templateId) {
@@ -41,6 +47,18 @@ function parseJson(val) {
   if (val == null) return null;
   if (typeof val === 'object') return val;
   try { return JSON.parse(val); } catch (_) { return null; }
+}
+
+function decodeUploadedName(value) {
+  if (value == null) return value;
+  const text = String(value).replace(/^\uFEFF/, '').trim();
+  if (/[ÃÂèéêëåæç鍏妯璇�]/.test(text)) {
+    try {
+      const repaired = Buffer.from(text, 'latin1').toString('utf8');
+      if (repaired && !repaired.includes('�')) return repaired;
+    } catch (_) {}
+  }
+  return text;
 }
 
 async function generateExcel(templateId, batches, options = {}) {
@@ -125,7 +143,9 @@ function getFieldNames(sheet, headerRow) {
   const fields = [];
   const row = sheet.getRow(headerRow);
   row.eachCell({ includeEmpty: true }, (cell, colNum) => {
-    fields[colNum - 1] = String(cell.value || '').trim();
+    let value = cell.value;
+    if (value && typeof value === 'object' && Array.isArray(value.richText)) value = value.richText.map(part => part.text || '').join('');
+    fields[colNum - 1] = String(value || '').replace(/^\uFEFF/, '').replace(/\{\{|\}\}/g, '').trim();
   });
   return fields;
 }
@@ -140,6 +160,9 @@ async function parseTemplateStructure(filePath) {
   const fields = getFieldNames(sheet, headerRow);
   const columns = fields.map((name, idx) => ({
     index: idx + 1,
+    colNumber: idx + 1,
+    sourceColNumber: idx + 1,
+    header: name || `列${idx + 1}`,
     name: name || `列${idx + 1}`,
     field: name || `col_${idx + 1}`,
     type: 'text',
@@ -150,4 +173,4 @@ async function parseTemplateStructure(filePath) {
   return { structure, fields };
 }
 
-module.exports = { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure };
+module.exports = { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure, decodeUploadedName };

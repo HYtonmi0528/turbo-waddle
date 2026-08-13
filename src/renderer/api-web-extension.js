@@ -3,6 +3,7 @@
   const api = window.electronAPI = window.electronAPI || {};
   const collab = api.collaboration = api.collaboration || {};
   const app = api.app = api.app || {};
+  const fieldMapping = api.fieldMapping = api.fieldMapping || {};
   const request = (url, options) => fetch(url, Object.assign({ credentials: 'same-origin' }, options || {})).then(async response => {
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(body.message || `请求失败（${response.status}）`);
@@ -10,6 +11,7 @@
   });
   app.getVersion = () => request('/api/version').then(result => result.version || 'web').catch(() => 'web');
   collab.listExternalSubmissions = () => request('/api/external/rfqs');
+  collab.submitExternalRfq = ({ title, file }) => { const form = new FormData(); form.append('file', file); if (title) form.append('title', title); return request('/api/external/rfqs/submit', { method: 'POST', body: form }); };
   collab.registerRole = payload => request('/api/auth/register/role', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   collab.acceptExternalSubmission = (id, payload = {}) => request(`/api/external/rfqs/${encodeURIComponent(id)}/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
   collab.rejectExternalSubmission = (id, reason = '') => request(`/api/external/rfqs/${encodeURIComponent(id)}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
@@ -31,6 +33,8 @@
     };
     input.click();
   });
-  collab.downloadDocument = document => { const link = document.createElement('a'); link.href = `/api/documents/${encodeURIComponent(document.id)}/download`; link.download = document.originalName || '资料'; link.click(); return Promise.resolve({ success: true }); };
+  collab.downloadDocument = item => { const link = window.document.createElement('a'); link.href = `/api/documents/${encodeURIComponent(item.id)}/download`; link.download = item.originalName || '资料'; link.click(); return Promise.resolve({ success: true }); };
   collab.deleteDocument = id => request(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  collab.assignTaskItem = (taskId, itemId, assignedUserId) => request(`/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/assignee`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignedUserId }) });
+  fieldMapping.addSystemField = payload => request('/api/fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(result => result.field || result);
 })();

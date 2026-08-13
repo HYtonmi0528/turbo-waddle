@@ -157,6 +157,10 @@ function registerIpcHandlers() {
     return collaborationClient.importTask(result.filePaths[0], metadata);
   });
   ipcMain.handle('collaboration:listExternalSubmissions', async () => collaborationClient.listExternalSubmissions());
+  ipcMain.handle('collaboration:submitExternalRfq', async (event, payload = {}) => {
+    if (!payload.file?.path) throw new Error('请选择询价表文件');
+    return collaborationClient.uploadExternalRfq(payload.file.path, { title: payload.title });
+  });
   ipcMain.handle('collaboration:acceptExternalSubmission', async (event, id, payload = {}) =>
     collaborationClient.acceptExternalSubmission(id, payload));
   ipcMain.handle('collaboration:rejectExternalSubmission', async (event, id, reason = '') =>
@@ -184,6 +188,8 @@ function registerIpcHandlers() {
       { method: 'PATCH', body: payload }
     );
   });
+  ipcMain.handle('collaboration:assignTaskItem', async (event, taskId, itemId, assignedUserId) =>
+    collaborationClient.request(`/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/assignee`, { method: 'PATCH', body: { assignedUserId } }));
   ipcMain.handle('collaboration:uploadTaskAttachment', async (event, taskId, itemId) => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '选择要上传到该产品的附件',

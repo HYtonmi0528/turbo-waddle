@@ -175,6 +175,14 @@ class CollaborationClient {
     return this.request('/api/external/rfqs');
   }
 
+  async uploadExternalRfq(filePath, metadata = {}) {
+    const buffer = fs.readFileSync(filePath);
+    const form = new FormData();
+    form.append('file', new Blob([buffer]), path.basename(filePath));
+    Object.entries(metadata).forEach(([key, value]) => { if (value != null && value !== '') form.append(key, String(value)); });
+    return this.request('/api/external/rfqs/submit', { method: 'POST', body: form, timeout: 120000 });
+  }
+
   acceptExternalSubmission(id, payload = {}) {
     return this.request(`/api/external/rfqs/${encodeURIComponent(id)}/accept`, {
       method: 'POST', body: payload

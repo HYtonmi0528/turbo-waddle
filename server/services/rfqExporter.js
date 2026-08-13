@@ -174,7 +174,18 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
   }
 
   await workbook.xlsx.writeFile(outputPath);
-  return { sheetName: imported.sheetName, headerRow: imported.headerRow, tables: [...columnsByTable.values()].map(({ sheet: tableSheet, headerRow, columns }) => ({ sheetName: tableSheet.name, headerRow, columns })) };
+  const tables = [...columnsByTable.values()].map(({ sheet: tableSheet, headerRow, columns }) => ({
+    sheetName: tableSheet.name,
+    headerRow,
+    columns
+  }));
+  return {
+    sheetName: imported.sheetName,
+    headerRow: imported.headerRow,
+    // Keep the legacy single-table response while exposing every detected table.
+    columns: tables[0]?.columns,
+    tables
+  };
 }
 
 module.exports = { exportCompletedRfq, EXPORT_FIELDS };
