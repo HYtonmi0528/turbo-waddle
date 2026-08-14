@@ -16,59 +16,7 @@ function cleanError(error) {
     .replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, '');
 }
 
-function ConnectionScreen({ initialUrl, onConnected }) {
-  const { language, setLanguage, t } = useI18n();
-  const [serverUrl, setServerUrl] = useState(initialUrl || '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const connect = async event => {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      const result = await window.electronAPI.collaboration.configure(serverUrl);
-      onConnected(result);
-    } catch (e) {
-      setError(cleanError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="collab-auth-page">
-      <div className="collab-auth-card">
-        <label className="collab-auth-language"><span>{t('language')}</span><select value={language} onChange={e => setLanguage(e.target.value)}>{languageOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-        <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
-        <h1>连接询价协作服务器</h1>
-        <p>当前电脑作为服务器时使用本机地址；其他员工电脑填写服务器的局域网IP。</p>
-        <form onSubmit={connect}>
-          <label className="form-label" htmlFor="server-url">服务器地址</label>
-          <input
-            id="server-url"
-            className="form-input"
-            value={serverUrl}
-            onChange={event => setServerUrl(event.target.value)}
-            placeholder="http://192.168.1.100:3210"
-            required
-          />
-          <div className="collab-connection-help">
-            管理员和员工都填写同一个团队服务器地址。<br />
-            只有数据库服务运行在当前电脑时，才能使用 http://127.0.0.1:3210
-          </div>
-          <button type="button" className="btn btn-outline collab-full-button" onClick={() => setServerUrl('http://127.0.0.1:3210')}>这台电脑运行服务器，使用本机地址</button>
-          {error && <div className="collab-form-error">{error}</div>}
-          <button className="btn btn-primary btn-lg collab-full-button" disabled={busy}>
-            {busy ? '正在测试连接…' : '测试并保存连接'}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
+function AccessScreen({ setup, onLogin, onRefreshSetup }) {
   const { language, setLanguage, t } = useI18n();
   const getInitialMode = value => value?.initialized ? 'login' : 'choose-setup';
   const [mode, setMode] = useState(getInitialMode(setup));
@@ -135,13 +83,12 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
       <div className="collab-auth-card collab-login-card">
         <label className="collab-auth-language"><span>{t('language')}</span><select value={language} onChange={e => setLanguage(e.target.value)}>{languageOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
-        <h1>{mode === 'setup' ? '创建初始管理员' : mode === 'choose-setup' ? '系统尚未初始化' : mode === 'waiting' ? '等待负责人初始化' : mode === 'register' ? '员工注册' : '登录询价协作系统'}</h1>
+        <h1>{mode === 'setup' ? t('setupTitle') : mode === 'choose-setup' ? t('notInitialized') : mode === 'waiting' ? t('waitingSetup') : mode === 'register' ? t('registerTitle') : mode === 'register-role' ? t('chooseRoleTitle') : t('loginTitle')}</h1>
         {mode === 'choose-setup' && (
           <div className="collab-waiting-setup">
             <p>团队中只需要一位负责人创建第一个管理员账号，管理员不必使用服务器电脑。</p>
             <button type="button" className="btn btn-primary btn-lg collab-full-button" onClick={() => setMode('setup')}>我是负责人，创建初始管理员</button>
             <button type="button" className="btn btn-outline collab-full-button" onClick={() => setMode('waiting')}>我是员工，等待负责人创建</button>
-            <button type="button" className="btn btn-outline collab-full-button" onClick={onReconfigure}>← 返回服务器连接</button>
           </div>
         )}
         {mode === 'waiting' && (
@@ -149,7 +96,6 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
             <p>请等待负责人在任意一台已连接团队服务器的电脑上创建初始管理员。</p>
             <button type="button" className="btn btn-primary btn-lg collab-full-button" onClick={onRefreshSetup}>重新检查</button>
             <button type="button" className="btn btn-outline collab-full-button" onClick={() => setMode('choose-setup')}>← 返回身份选择</button>
-            <button type="button" className="btn btn-outline collab-full-button" onClick={onReconfigure}>← 返回服务器连接</button>
           </div>
         )}
         {mode !== 'waiting' && mode !== 'choose-setup' && <form onSubmit={submit}>
@@ -166,6 +112,7 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
                 <option value="viewer">{t('overseas')}</option>
                 <option value="purchaser">{t('purchaser')}</option>
                 <option value="manager">{t('manager')}</option>
+                <option value="admin">{t('admin')}</option>
               </select>
             </div>
           )}
@@ -186,22 +133,21 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
           {error && <div className="collab-form-error">{error}</div>}
           {message && <div className="collab-form-success">{message}</div>}
           <button className="btn btn-primary btn-lg collab-full-button" disabled={busy}>
-            {busy ? '正在处理…' : mode === 'setup' ? '创建管理员' : mode === 'register' ? '提交注册' : '登录'}
+            {busy ? t('processing') : mode === 'setup' ? t('createAdmin') : mode === 'register' ? t('submitRegistration') : mode === 'register-role' ? t('submitRole') : t('login')}
           </button>
         </form>}
         {mode !== 'waiting' && mode !== 'choose-setup' && <div className="collab-auth-links">
           {mode === 'setup' ? (
             <button type="button" onClick={() => setMode('choose-setup')}>← 返回身份选择</button>
-          ) : (
+          ) : mode !== 'register-role' ? (
             <button type="button" onClick={() => {
               setError('');
               setMessage('');
               setMode(mode === 'register' ? 'login' : 'register');
             }}>
-              {mode === 'register' ? '← 返回登录' : '注册普通员工账号'}
+              {mode === 'register' ? t('backToLogin') : t('register')}
             </button>
-          )}
-          {mode !== 'setup' && <button type="button" onClick={onReconfigure}>修改服务器连接</button>}
+          ) : null}
         </div>}
       </div>
     </div>
@@ -321,7 +267,7 @@ export default function CollaborationShell() {
       firstNotificationLoad.current = true;
       setPhase('app');
       try { Notification.requestPermission(); } catch (_) {}
-    }} onReconfigure={() => {}} onRefreshSetup={async () => {
+    }} onRefreshSetup={async () => {
       const result = await window.electronAPI.collaboration.getState();
       setConnection({ setup: result });
     }} />;
