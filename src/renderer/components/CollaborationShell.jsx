@@ -127,7 +127,7 @@ function AccessScreen({ setup, onLogin, onRefreshSetup }) {
           {mode === 'login' && (
             <label className="form-checkbox">
               <input type="checkbox" checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} />
-              记住密码（下次自动登录）
+              {t('rememberPassword')}
             </label>
           )}
           {error && <div className="collab-form-error">{error}</div>}
@@ -196,6 +196,7 @@ export default function CollaborationShell() {
         const restoredUser = await window.electronAPI.collaboration.restoreSession();
         if (!mounted) return;
         if (restoredUser) {
+          if (restoredUser.role === 'viewer') setLanguage('es-ES');
           setUser(restoredUser);
           setPhase('app');
         } else {
@@ -262,6 +263,7 @@ export default function CollaborationShell() {
   if (phase === 'loading') return <div className="collab-loading">正在启动询价协作系统…</div>;
   if (phase === 'access') {
     return <AccessScreen setup={connection.setup} onLogin={nextUser => {
+      if (nextUser.role === 'viewer') setLanguage('es-ES');
       setUser(nextUser);
       setActiveArea(nextUser.role === 'viewer' ? 'submit' : 'dashboard');
       firstNotificationLoad.current = true;
