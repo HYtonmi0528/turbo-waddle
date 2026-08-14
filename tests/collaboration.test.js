@@ -7,6 +7,29 @@ const ExcelJS = require('exceljs');
 const { hashPassword, verifyPassword, createSessionToken, hashToken } = require('../server/lib/passwords');
 const { importRfqWorkbook } = require('../server/services/rfqImporter');
 const { exportCompletedRfq } = require('../server/services/rfqExporter');
+const {
+  inferSystemFieldKey,
+  normalizePersistedMapping
+} = require('../src/shared/templateMappings');
+
+test('template mappings accept cloud camelCase, legacy snake_case and Chinese labels', () => {
+  const systemFields = [
+    { key: 'supplierName', label: '供应商名称' },
+    { key: 'model', label: '型号/规格' },
+    { key: 'price', label: '价格/单价' }
+  ];
+
+  assert.deepEqual(
+    normalizePersistedMapping({ templateField: '公司名称', systemField: '公司名称' }, systemFields),
+    { templateField: '公司名称', systemField: 'supplierName' }
+  );
+  assert.deepEqual(
+    normalizePersistedMapping({ template_field: '型号', system_field: 'model' }, systemFields),
+    { templateField: '型号', systemField: 'model' }
+  );
+  assert.equal(inferSystemFieldKey('含税含运（人民币元）', systemFields, { allowUnknown: false }), 'price');
+  assert.equal(inferSystemFieldKey('未知字段', systemFields, { allowUnknown: false }), '');
+});
 
 test('passwords are salted and verified without storing plaintext', async () => {
   const first = await hashPassword('TestPassword123');

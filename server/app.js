@@ -19,6 +19,7 @@ const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemp
 const { getToday } = require('./services/exchangeRateService');
 const { logger } = require('./lib/logger');
 const packageVersion = require('../package.json').version;
+const { inferSystemFieldKey } = require('../src/shared/templateMappings');
 
 const uuid = () => crypto.randomUUID();
 const now = () => new Date();
@@ -1124,11 +1125,19 @@ function createApp() {
     const timestamp = now();
     const originalName = decodeUploadedName(req.file.originalname || 'template.xlsx');
     const name = decodeUploadedName(req.body.name || path.basename(originalName, path.extname(originalName))) || '未命名模板';
+    const [customFieldRows] = await getPool().query(
+      'SELECT field_key AS `key`, label, category, data_type AS dataType FROM custom_system_fields'
+    );
+    const availableSystemFields = [...BUILTIN_SYSTEM_FIELDS, ...customFieldRows];
+    const inferredMappings = fields.map(templateField => ({
+      templateField,
+      systemField: inferSystemFieldKey(templateField, availableSystemFields, { allowUnknown: false })
+    })).filter(mapping => mapping.systemField);
     await getPool().execute(
       `INSERT INTO user_templates (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, storage_path, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, req.user.id, name, req.body.type || '通用', req.body.description || null, originalName,
-       json(structure), json(fields.map(f => ({ templateField: f, systemField: f }))), 0, storagePath, timestamp, timestamp]
+       json(structure), json(inferredMappings), 0, storagePath, timestamp, timestamp]
     );
     res.json({ id, name, fields, structure });
   }));

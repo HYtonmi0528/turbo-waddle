@@ -3,6 +3,10 @@ const path = require('path');
 const fs = require('fs');
 const { getPool } = require('../lib/db');
 const { loadConfig } = require('../lib/config');
+const {
+  normalizeFieldName,
+  normalizePersistedMapping
+} = require('../../src/shared/templateMappings');
 
 function numberValue(val) {
   const n = Number(String(val || '').replace(/[¥￥$,\s]/g, ''));
@@ -124,9 +128,14 @@ function detectHeaderRow(sheet) {
 function buildColumnMap(sheet, headerRow, mappings, structure) {
   const map = [];
   const fields = getFieldNames(sheet, headerRow);
+  const normalizedMappings = (mappings || [])
+    .map(mapping => normalizePersistedMapping(mapping))
+    .filter(mapping => mapping.templateField && mapping.systemField);
   fields.forEach((fieldName, idx) => {
     const colIndex = idx + 1;
-    const mapping = mappings.find(m => m.templateField === fieldName);
+    const mapping = normalizedMappings.find(m =>
+      normalizeFieldName(m.templateField) === normalizeFieldName(fieldName)
+    );
     if (mapping) {
       map.push({ colIndex, field: mapping.systemField, isNumber: false });
     }

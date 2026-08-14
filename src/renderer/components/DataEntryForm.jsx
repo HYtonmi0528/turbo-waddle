@@ -4,6 +4,10 @@ import {
   parseClipboardGrid,
   applyGridPaste
 } from '../utils/gridNavigation';
+import {
+  inferSystemFieldKey,
+  normalizePersistedMapping
+} from '../../shared/templateMappings';
 
 const NUMERIC_FIELDS = new Set([
   'price', 'cost', 'profit', 'profitRate', 'totalPrice', 'quantity',
@@ -87,20 +91,23 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
           window.electronAPI.fieldMapping.getSystemFields()
         ]);
         if (canceled) return;
-        const mappingList = mappings || [];
+        const mappingList = (mappings || [])
+          .map(mapping => normalizePersistedMapping(mapping, systemFields || []))
+          .filter(mapping => mapping.templateField && mapping.systemField);
         const fields = (structure?.columns || []).map((column, index) => {
           const templateLabel = cleanTemplateField(column.header);
           const normalizedLabel = normalizeTemplateField(templateLabel);
           const mapping = mappingList.find(item =>
-            cleanTemplateField(item.template_field) === templateLabel ||
-            normalizeTemplateField(item.template_field) === normalizedLabel
+            cleanTemplateField(item.templateField) === templateLabel ||
+            normalizeTemplateField(item.templateField) === normalizedLabel
           );
           const calculatedUsdCost = isUsdCostTemplateField(templateLabel);
           const landedPrice = isLandedPriceTemplateField(templateLabel);
-          if (!mapping?.system_field && !calculatedUsdCost && !landedPrice) return null;
+          const inferredSystemField = inferSystemFieldKey(templateLabel, systemFields || [], { allowUnknown: false });
+          if (!mapping?.systemField && !inferredSystemField && !calculatedUsdCost && !landedPrice) return null;
           const systemField = calculatedUsdCost
             ? 'usdCost'
-            : landedPrice ? 'price' : mapping.system_field;
+            : landedPrice ? 'price' : (mapping?.systemField || inferredSystemField);
           const systemFieldDefinition = (systemFields || []).find(field => field.key === systemField);
           const attachmentType = inferAttachmentType(templateLabel, systemFieldDefinition?.dataType);
           const width = Math.min(Math.max((Number(column.width) || 12) * 8, 70), 220);
