@@ -85,16 +85,32 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
     setIsLoadingFields(true);
     (async () => {
       try {
-        const [structure, mappings, systemFields] = await Promise.all([
+        const [remoteStructure, remoteMappings, systemFields] = await Promise.all([
           window.electronAPI.templates.getStructure(selectedTemplate.id),
           window.electronAPI.fieldMapping.get(selectedTemplate.id),
           window.electronAPI.fieldMapping.getSystemFields()
         ]);
         if (canceled) return;
-        const mappingList = (mappings || [])
+        // 老模板可能没有单独的 structure/mappings 接口数据，但模板列表已携带快照。
+        // 兼容两种来源，避免“模板已选中但录入区为空”。
+        const structure = Array.isArray(remoteStructure?.columns)
+          ? remoteStructure
+          : (Array.isArray(selectedTemplate.structure?.columns) ? selectedTemplate.structure : {});
+        const persistedMappings = Array.isArray(remoteMappings) && remoteMappings.length > 0
+          ? remoteMappings
+          : (Array.isArray(selectedTemplate.mappings) ? selectedTemplate.mappings : []);
+        const mappingList = persistedMappings
           .map(mapping => normalizePersistedMapping(mapping, systemFields || []))
           .filter(mapping => mapping.templateField && mapping.systemField);
-        const fields = (structure?.columns || []).map((column, index) => {
+        const structureColumns = Array.isArray(structure?.columns) ? structure.columns : [];
+        const columns = structureColumns.length > 0
+          ? structureColumns
+          : mappingList.map((mapping, index) => ({
+            header: mapping.templateField,
+            colNumber: index + 1,
+            width: 12
+          }));
+        const fields = columns.map((column, index) => {
           const templateLabel = cleanTemplateField(column.header);
           const normalizedLabel = normalizeTemplateField(templateLabel);
           const mapping = mappingList.find(item =>
