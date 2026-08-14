@@ -15,7 +15,15 @@ const {
 } = require('./lib/passwords');
 const { importRfqWorkbook } = require('./services/rfqImporter');
 const { exportCompletedRfq } = require('./services/rfqExporter');
-const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure, decodeUploadedName } = require('./services/templateService');
+const {
+  listTemplates,
+  deleteTemplate,
+  generateExcel,
+  getTemplatesDir,
+  parseTemplateStructure,
+  decodeUploadedName,
+  createGeneratedTemplateFile
+} = require('./services/templateService');
 const { getToday } = require('./services/exchangeRateService');
 const { logger } = require('./lib/logger');
 const packageVersion = require('../package.json').version;
@@ -578,17 +586,28 @@ function createApp() {
     const timestamp = now();
     const template = req.body || {};
     if (!template.name) return res.status(400).json({ message: '模板名称不能为空' });
+    const [[existing]] = await getPool().execute(
+      'SELECT storage_path, structure_json, mappings_json FROM user_templates WHERE id = ?',
+      [id]
+    );
+    let generated = null;
+    if (!existing && !template.structure) {
+      generated = await createGeneratedTemplateFile(id, template.fields);
+    }
+    const storagePath = template.storagePath || generated?.storagePath || existing?.storage_path || null;
+    const structureJson = template.structure || generated?.structure || parseJson(existing?.structure_json, null);
+    const mappingsJson = template.mappings || generated?.mappings || parseJson(existing?.mappings_json, []);
     const isShared = template.isShared != null ? (template.isShared ? 1 : 0) : 0;
     await getPool().execute(
       `INSERT INTO user_templates
-       (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, owner_id, name, type, description, original_name, storage_path, structure_json, mappings_json, is_shared, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type), is_shared = VALUES(is_shared), updated_at = VALUES(updated_at)`,
       [id, req.user.id, template.name, template.type || '通用', template.description || null,
-        template.originalName || null, json(template.structure), json(template.mappings || []),
+        template.originalName || null, storagePath, json(structureJson), json(mappingsJson),
         isShared, id === req.body.id ? undefined : timestamp, timestamp]
     );
-    res.status(201).json({ id });
+    res.status(201).json({ id, structure: structureJson, mappings: mappingsJson });
   }));
 
   async function createNotifications(connection, taskId, title, message) {
@@ -1083,8 +1102,25 @@ function createApp() {
     res.json({ ok: true });
   }));
   app.get('/api/templates/:id/structure', authenticate, asyncRoute(async (req, res) => {
-    const [[row]] = await getPool().execute('SELECT structure_json FROM user_templates WHERE id = ?', [req.params.id]);
-    res.json(row ? parseJson(row.structure_json, {}) : {});
+    const [[row]] = await getPool().execute(
+      'SELECT structure_json, storage_path FROM user_templates WHERE id = ?',
+      [req.params.id]
+    );
+    let structure = row ? parseJson(row.structure_json, {}) : {};
+    if ((!structure || !Array.isArray(structure.columns) || structure.columns.length === 0) &&
+        row?.storage_path && fs.existsSync(row.storage_path)) {
+      try {
+        const parsed = await parseTemplateStructure(row.storage_path);
+        structure = parsed.structure;
+        await getPool().execute(
+          'UPDATE user_templates SET structure_json = ?, updated_at = ? WHERE id = ?',
+          [json(structure), now(), req.params.id]
+        );
+      } catch (error) {
+        logger.warn(`模板结构自动修复失败 ${req.params.id}: ${error.message}`);
+      }
+    }
+    res.json(structure || {});
   }));
   app.get('/api/templates/:id/mappings', authenticate, asyncRoute(async (req, res) => {
     const [[row]] = await getPool().execute('SELECT mappings_json FROM user_templates WHERE id = ?', [req.params.id]);

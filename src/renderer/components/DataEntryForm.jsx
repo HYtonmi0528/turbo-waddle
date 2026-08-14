@@ -5,6 +5,7 @@ import {
   applyGridPaste
 } from '../utils/gridNavigation';
 import {
+  DEFAULT_TEMPLATE_FIELDS,
   inferSystemFieldKey,
   normalizePersistedMapping
 } from '../../shared/templateMappings';
@@ -105,8 +106,12 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
         const structureColumns = Array.isArray(structure?.columns) ? structure.columns : [];
         const columns = structureColumns.length > 0
           ? structureColumns
-          : mappingList.map((mapping, index) => ({
+          : mappingList.length > 0 ? mappingList.map((mapping, index) => ({
             header: mapping.templateField,
+            colNumber: index + 1,
+            width: 12
+          })) : DEFAULT_TEMPLATE_FIELDS.map((header, index) => ({
+            header,
             colNumber: index + 1,
             width: 12
           }));

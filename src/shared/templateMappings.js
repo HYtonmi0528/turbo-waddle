@@ -18,6 +18,8 @@ const FIELD_ALIASES = {
   notes: ['备注', '说明', 'remark', 'remarks', 'notes']
 };
 
+const DEFAULT_TEMPLATE_FIELDS = ['供应商名称', '产品名称', '型号', '价格', '数量', '备注'];
+
 function normalizeFieldName(value) {
   return String(value || '')
     .replace(/\{\{|\}\}/g, '')
@@ -75,6 +77,7 @@ function normalizePersistedMapping(mapping, systemFields = []) {
 
 module.exports = {
   FIELD_ALIASES,
+  DEFAULT_TEMPLATE_FIELDS,
   normalizeFieldName,
   getMappingTemplateField,
   getMappingSystemField,

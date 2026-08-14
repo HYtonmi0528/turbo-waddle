@@ -4,6 +4,8 @@ const fs = require('fs');
 const { getPool } = require('../lib/db');
 const { loadConfig } = require('../lib/config');
 const {
+  DEFAULT_TEMPLATE_FIELDS,
+  inferSystemFieldKey,
   normalizeFieldName,
   normalizePersistedMapping
 } = require('../../src/shared/templateMappings');
@@ -18,6 +20,48 @@ function getTemplatesDir() {
   const dir = path.join(config.storageDir, 'templates');
   fs.mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+function buildGeneratedTemplateStructure(fields) {
+  const normalizedFields = [...new Set((Array.isArray(fields) && fields.length ? fields : DEFAULT_TEMPLATE_FIELDS)
+    .map(field => String(field || '').replace(/\{\{|\}\}/g, '').trim())
+    .filter(Boolean))];
+  const columns = normalizedFields.map((field, index) => ({
+    index: index + 1,
+    colNumber: index + 1,
+    sourceColNumber: index + 1,
+    header: field,
+    name: field,
+    field,
+    type: 'text',
+    width: 120
+  }));
+  return {
+    structure: { headerRow: 1, columns, sheetName: 'Sheet1' },
+    fields: normalizedFields,
+    mappings: normalizedFields.map(field => ({
+      templateField: field,
+      systemField: inferSystemFieldKey(field, [], { allowUnknown: true })
+    }))
+  };
+}
+
+async function createGeneratedTemplateFile(templateId, fields) {
+  const { structure, fields: normalizedFields, mappings } = buildGeneratedTemplateStructure(fields);
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet(structure.sheetName);
+  normalizedFields.forEach((field, index) => {
+    const cell = sheet.getCell(1, index + 1);
+    cell.value = `{{${field}}}`;
+    cell.font = { name: '微软雅黑', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    sheet.getColumn(index + 1).width = Math.max(12, Math.min(32, field.length + 6));
+  });
+  sheet.getRow(1).height = 24;
+  const storagePath = path.join(getTemplatesDir(), `${templateId}.xlsx`);
+  await workbook.xlsx.writeFile(storagePath);
+  return { storagePath, structure, mappings };
 }
 
 async function listTemplates(userId) {
@@ -182,4 +226,13 @@ async function parseTemplateStructure(filePath) {
   return { structure, fields };
 }
 
-module.exports = { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure, decodeUploadedName };
+module.exports = {
+  listTemplates,
+  deleteTemplate,
+  generateExcel,
+  getTemplatesDir,
+  parseTemplateStructure,
+  decodeUploadedName,
+  buildGeneratedTemplateStructure,
+  createGeneratedTemplateFile
+};

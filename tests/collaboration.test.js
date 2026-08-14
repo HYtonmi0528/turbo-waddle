@@ -7,6 +7,7 @@ const ExcelJS = require('exceljs');
 const { hashPassword, verifyPassword, createSessionToken, hashToken } = require('../server/lib/passwords');
 const { importRfqWorkbook } = require('../server/services/rfqImporter');
 const { exportCompletedRfq } = require('../server/services/rfqExporter');
+const { buildGeneratedTemplateStructure } = require('../server/services/templateService');
 const {
   inferSystemFieldKey,
   normalizePersistedMapping
@@ -29,6 +30,16 @@ test('template mappings accept cloud camelCase, legacy snake_case and Chinese la
   );
   assert.equal(inferSystemFieldKey('含税含运（人民币元）', systemFields, { allowUnknown: false }), 'price');
   assert.equal(inferSystemFieldKey('未知字段', systemFields, { allowUnknown: false }), '');
+});
+
+test('new web templates persist usable headers and mappings', () => {
+  const result = buildGeneratedTemplateStructure(['公司名称', '{{型号}}', '公司名称', '']);
+  assert.deepEqual(result.fields, ['公司名称', '型号']);
+  assert.deepEqual(result.structure.columns.map(column => column.header), ['公司名称', '型号']);
+  assert.deepEqual(result.mappings, [
+    { templateField: '公司名称', systemField: 'supplierName' },
+    { templateField: '型号', systemField: 'model' }
+  ]);
 });
 
 test('passwords are salted and verified without storing plaintext', async () => {
