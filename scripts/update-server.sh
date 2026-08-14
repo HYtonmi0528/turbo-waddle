@@ -12,7 +12,9 @@ git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 
 echo "[2/5] 安装依赖"
-npm install
+# 云服务器只运行 Web/Node 服务，不需要下载 Electron 桌面运行时。
+# 跳过安装脚本可避免国内网络访问 Electron CDN 时出现 socket hang up。
+ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm install --ignore-scripts
 
 echo "[3/5] 构建网页资源"
 npm run build:renderer
