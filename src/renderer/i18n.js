@@ -40,6 +40,16 @@ const messages = {
   }
 };
 
+Object.assign(messages['zh-CN'], {
+  preview: '\u9884\u89c8', rename: '\u91cd\u547d\u540d', renameFolder: '\u91cd\u547d\u540d\u6587\u4ef6\u5939', renamePrompt: '\u8bf7\u8f93\u5165\u65b0\u6587\u4ef6\u540d', renameFolderPrompt: '\u8bf7\u8f93\u5165\u65b0\u6587\u4ef6\u5939\u540d', renameSuccess: '\u6587\u4ef6\u5df2\u91cd\u547d\u540d', renameFolderSuccess: '\u6587\u4ef6\u5939\u5df2\u91cd\u547d\u540d', renameError: '\u6587\u4ef6\u91cd\u547d\u540d\u5931\u8d25', renameFolderError: '\u6587\u4ef6\u5939\u91cd\u547d\u540d\u5931\u8d25', previewUnsupported: '\u6b64\u6587\u4ef6\u7c7b\u578b\u4e0d\u652f\u6301\u5728\u7ebf\u9884\u89c8\uff0c\u8bf7\u4e0b\u8f7d\u67e5\u770b', previewError: '\u9884\u89c8\u5931\u8d25', previewOpened: '\u5df2\u5728\u9ed8\u8ba4\u7a0b\u5e8f\u4e2d\u6253\u5f00\u9884\u89c8'
+});
+Object.assign(messages['en-US'], {
+  preview: 'Preview', rename: 'Rename', renameFolder: 'Rename folder', renamePrompt: 'Enter a new file name', renameFolderPrompt: 'Enter a new folder name', renameSuccess: 'File renamed', renameFolderSuccess: 'Folder renamed', renameError: 'Failed to rename file', renameFolderError: 'Failed to rename folder', previewUnsupported: 'This file type cannot be previewed online. Download it instead.', previewError: 'Preview failed', previewOpened: 'Preview opened in the default application'
+});
+Object.assign(messages['es-ES'], {
+  preview: 'Vista previa', rename: 'Renombrar', renameFolder: 'Renombrar carpeta', renamePrompt: 'Introduzca el nuevo nombre del archivo', renameFolderPrompt: 'Introduzca el nuevo nombre de la carpeta', renameSuccess: 'Archivo renombrado', renameFolderSuccess: 'Carpeta renombrada', renameError: 'No se pudo renombrar el archivo', renameFolderError: 'No se pudo renombrar la carpeta', previewUnsupported: 'Este tipo de archivo no admite vista previa. Descárguelo.', previewError: 'Error de vista previa', previewOpened: 'Vista previa abierta en la aplicación predeterminada'
+});
+
 const LanguageContext = createContext(null);
 export const languageOptions = [['zh-CN','\u4e2d\u6587'],['en-US','English'],['es-ES','Espa\u00f1ol']];
 

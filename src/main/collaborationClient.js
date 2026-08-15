@@ -212,6 +212,25 @@ class CollaborationClient {
     return this.request(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
+  renameDocument(id, payload = {}) {
+    return this.request(`/api/documents/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload });
+  }
+
+  listDocumentFolders() {
+    return this.request('/api/document-folders');
+  }
+
+  renameDocumentFolder(payload = {}) {
+    return this.request('/api/document-folders', { method: 'PATCH', body: payload });
+  }
+
+  async previewDocument(document) {
+    const extension = path.extname(document.originalName || '').toLowerCase() || '.bin';
+    const filePath = path.join(require('os').tmpdir(), `latic-preview-${document.id}${extension}`);
+    await this.downloadFile(`/api/documents/${encodeURIComponent(document.id)}/preview`, filePath);
+    return { success: true, filePath };
+  }
+
   async uploadTaskAttachment(taskId, itemId, filePath) {
     const buffer = fs.readFileSync(filePath);
     const form = new FormData();

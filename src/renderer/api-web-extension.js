@@ -34,6 +34,10 @@
     input.click();
   });
   collab.downloadDocument = item => { const link = window.document.createElement('a'); link.href = `/api/documents/${encodeURIComponent(item.id)}/download`; link.download = item.originalName || '资料'; link.click(); return Promise.resolve({ success: true }); };
+  collab.previewDocument = item => Promise.resolve({ success: true, url: `/api/documents/${encodeURIComponent(item.id)}/preview` });
+  collab.renameDocument = (id, payload) => request(`/api/documents/${encodeURIComponent(id)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) });
+  collab.listDocumentFolders = () => request('/api/document-folders');
+  collab.renameDocumentFolder = payload => request('/api/document-folders', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) });
   collab.deleteDocument = id => request(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
   collab.assignTaskItem = (taskId, itemId, assignedUserId) => request(`/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/assignee`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ assignedUserId }) });
   fieldMapping.addSystemField = payload => request('/api/fields', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).then(result => result.field || result);

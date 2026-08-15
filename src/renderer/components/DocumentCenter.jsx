@@ -29,6 +29,7 @@ export default function DocumentCenter() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [expanded, setExpanded] = useState({});
+  const [preview, setPreview] = useState(null);
 
   const load = useCallback(async () => {
     setBusy(true); setError('');
@@ -53,6 +54,35 @@ export default function DocumentCenter() {
   const download = async document => {
     try { await window.electronAPI.collaboration.downloadDocument(document); setMessage(t('downloadReady', { name: document.originalName })); }
     catch (e) { setError(e.message || t('downloadError')); }
+  };
+
+  const previewDocument = async document => {
+    const ext = String(document.fileExt || '').toLowerCase();
+    if (!['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
+      setError(t('previewUnsupported'));
+      return;
+    }
+    try {
+      const result = await window.electronAPI.collaboration.previewDocument(document);
+      if (result?.filePath && !result?.url) { setMessage(t('previewOpened')); return; }
+      setPreview({ document, url: result?.url || `/api/documents/${encodeURIComponent(document.id)}/preview`, kind: ext === 'pdf' ? 'pdf' : 'image' });
+    } catch (e) { setError(e.message || t('previewError')); }
+  };
+
+  const renameDocument = async document => {
+    const name = window.prompt(t('renamePrompt'), document.originalName || '');
+    if (name == null || !name.trim() || name.trim() === document.originalName) return;
+    try { await window.electronAPI.collaboration.renameDocument(document.id, { name: name.trim() }); await load(); setMessage(t('renameSuccess')); }
+    catch (e) { setError(e.message || t('renameError')); }
+  };
+
+  const renameFolder = async group => {
+    const name = window.prompt(t('renameFolderPrompt'), group.folder || '');
+    if (name == null || !name.trim() || name.trim() === group.folder) return;
+    try {
+      await window.electronAPI.collaboration.renameDocumentFolder({ archiveCategory: group.categoryName, archiveDate: group.date, archiveFolder: group.folder, newName: name.trim() });
+      await load(); setMessage(t('renameFolderSuccess'));
+    } catch (e) { setError(e.message || t('renameFolderError')); }
   };
 
   const remove = async document => {
@@ -100,16 +130,17 @@ export default function DocumentCenter() {
         {groups.map(group => {
           const isExpanded = expanded[group.key] !== false;
           return <section className="document-archive-group" key={group.key}>
-            <button className="document-archive-folder" onClick={() => setExpanded(value => ({ ...value, [group.key]: !isExpanded }))}><span>{isExpanded ? '▼' : '▶'} {group.categoryName} / {group.date} / {group.folder}</span><span>{t('fileCount', { count: group.documents.length })}</span></button>
+            <div className="document-archive-folder"><button className="document-folder-toggle" onClick={() => setExpanded(value => ({ ...value, [group.key]: !isExpanded }))}><span>{isExpanded ? '▼' : '▶'} {group.categoryName} / {group.date} / {group.folder}</span><span>{t('fileCount', { count: group.documents.length })}</span></button><button className="btn btn-ghost btn-sm" onClick={() => renameFolder(group)}>{t('renameFolder')}</button></div>
             {isExpanded && <div className="document-grid">{group.documents.map(document => <article className="document-card" key={document.id}>
               <div className="document-icon">{['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(String(document.fileExt).toLowerCase()) ? '🖼' : '📄'}</div>
               <div className="document-main"><h3 title={document.originalName}>{document.originalName}</h3><div className="document-meta"><span>{document.archiveCategory || document.category || t('uncategorized')}</span><span>{formatSize(document.fileSize)}</span><span>v{document.versionNo || 1}</span></div><div className="document-meta text-muted"><span>{document.createdByName || '—'}</span><span>{formatDate(document.createdAt, language)}</span></div></div>
-              <div className="document-actions"><button className="btn btn-outline btn-sm" onClick={() => download(document)}>{t('download')}</button><button className="btn btn-ghost btn-sm" onClick={() => remove(document)}>{t('moveToRecycle')}</button></div>
+              <div className="document-actions"><button className="btn btn-outline btn-sm" onClick={() => previewDocument(document)}>{t('preview')}</button><button className="btn btn-outline btn-sm" onClick={() => download(document)}>{t('download')}</button><button className="btn btn-ghost btn-sm" onClick={() => renameDocument(document)}>{t('rename')}</button><button className="btn btn-ghost btn-sm" onClick={() => remove(document)}>{t('moveToRecycle')}</button></div>
             </article>)}</div>}
           </section>;
         })}
       </div>
       {!busy && documents.length === 0 && <div className="empty-state"><div className="empty-state-icon">🗂</div><h3>{query ? t('noMatchingDocuments') : t('noDocuments')}</h3><p>{t('uploadToCreateArchive')}</p></div>}
+      {preview && <div className="document-preview-backdrop" role="dialog" aria-modal="true" onClick={() => setPreview(null)}><div className="document-preview-modal" onClick={event => event.stopPropagation()}><div className="card-header"><h2>{preview.document.originalName}</h2><button className="btn btn-ghost" onClick={() => setPreview(null)}>×</button></div>{preview.kind === 'image' ? <img src={preview.url} alt={preview.document.originalName} /> : <iframe title={preview.document.originalName} src={preview.url} />}</div></div>}
     </section>
   );
 }

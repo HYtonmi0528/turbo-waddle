@@ -181,6 +181,14 @@ function registerIpcHandlers() {
     if (result.canceled || !result.filePath) return { canceled: true };
     return collaborationClient.downloadFile(`/api/documents/${encodeURIComponent(document.id)}/download`, result.filePath);
   });
+  ipcMain.handle('collaboration:previewDocument', async (event, document) => {
+    const result = await collaborationClient.previewDocument(document);
+    if (result.filePath) await shell.openPath(result.filePath);
+    return result;
+  });
+  ipcMain.handle('collaboration:renameDocument', async (event, id, payload = {}) => collaborationClient.renameDocument(id, payload));
+  ipcMain.handle('collaboration:listDocumentFolders', async () => collaborationClient.listDocumentFolders());
+  ipcMain.handle('collaboration:renameDocumentFolder', async (event, payload = {}) => collaborationClient.renameDocumentFolder(payload));
   ipcMain.handle('collaboration:deleteDocument', async (event, id) => collaborationClient.deleteDocument(id));
   ipcMain.handle('collaboration:updateTaskItem', async (event, taskId, itemId, payload) => {
     return collaborationClient.request(

@@ -29,6 +29,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listDocuments: (params = {}) => ipcRenderer.invoke('collaboration:listDocuments', params),
     uploadDocument: (metadata = {}) => ipcRenderer.invoke('collaboration:uploadDocument', metadata),
     downloadDocument: (document) => ipcRenderer.invoke('collaboration:downloadDocument', document),
+    previewDocument: (document) => ipcRenderer.invoke('collaboration:previewDocument', document),
+    renameDocument: (id, payload) => ipcRenderer.invoke('collaboration:renameDocument', id, payload),
+    listDocumentFolders: () => ipcRenderer.invoke('collaboration:listDocumentFolders'),
+    renameDocumentFolder: (payload) => ipcRenderer.invoke('collaboration:renameDocumentFolder', payload),
     deleteDocument: (id) => ipcRenderer.invoke('collaboration:deleteDocument', id),
     updateTaskItem: (taskId, itemId, payload) =>
       ipcRenderer.invoke('collaboration:updateTaskItem', taskId, itemId, payload),

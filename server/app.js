@@ -695,13 +695,14 @@ function createApp() {
               t.status, t.assigned_user_ids AS assignedUserIds, t.updated_at AS updatedAt,
               COUNT(i.id) AS itemCount,
               SUM(CASE WHEN i.fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS completedCount,
-              MAX(CASE WHEN i.assigned_user_id = ? THEN 1 ELSE 0 END) AS itemAssigned
+              MAX(CASE WHEN i.assigned_user_id = ? THEN 1 ELSE 0 END) AS itemAssigned,
+              MAX(CASE WHEN i.assigned_user_id IS NULL OR i.assigned_user_id = ? THEN 1 ELSE 0 END) AS itemAvailable
        FROM rfq_tasks t LEFT JOIN rfq_items i ON i.task_id = t.id
        GROUP BY t.id ORDER BY t.updated_at DESC`,
-      [req.user.id]
+      [req.user.id, req.user.id]
     );
     const visibleRows = req.user.role === 'viewer' ? []
-      : req.user.role === 'purchaser' ? rows.filter(row => Number(row.itemAssigned) === 1)
+      : req.user.role === 'purchaser' ? rows.filter(row => Number(row.itemAvailable) === 1)
         : req.user.role === 'admin' ? rows.filter(row => ['review', 'submitted', 'completed'].includes(row.status))
           : rows;
     res.json({ tasks: visibleRows.map(row => ({
@@ -767,13 +768,10 @@ function createApp() {
        WHERE i.task_id = ? ORDER BY i.line_no`,
       [req.params.id]
     );
-    if (req.user.role === 'purchaser' && !items.some(item => item.assignedUserId === req.user.id)) {
-      return res.status(403).json({ message: '该询价单没有分配给你负责的产品' });
-    }
     task.assignedUserIds = parseJson(task.assignedUserIds, []);
-    const visibleItems = req.user.role === 'purchaser'
-      ? items.filter(item => item.assignedUserId === req.user.id)
-      : items;
+    // Purchasers can see the complete shared table. Unassigned rows are open
+    // to the team; assigned rows remain editable only by their assignee.
+    const visibleItems = items;
     res.json({ task, items: visibleItems.map(item => ({
       ...item,
       attachments: parseJson(item.attachments, []).map(({ storagePath, ...attachment }) => attachment),
@@ -866,7 +864,10 @@ function createApp() {
         [req.params.itemId, req.params.taskId]
       );
       if (!current) return { notFound: true };
-      if (req.user.role === 'viewer' || (req.user.role === 'purchaser' && current.assigned_user_id !== req.user.id)) {
+      // Purchasers may work on any unassigned product in a shared RFQ. Once a
+      // supervisor assigns a row, only that purchaser edits it. row_version
+      // below protects against two people saving the exact same row at once.
+      if (req.user.role === 'viewer' || (req.user.role === 'purchaser' && current.assigned_user_id && current.assigned_user_id !== req.user.id)) {
         return { forbidden: true };
       }
       if (!Number.isInteger(expectedVersion) || current.row_version !== expectedVersion) {
@@ -1498,6 +1499,89 @@ function createApp() {
     }
     if (!document.storage_path || !fs.existsSync(document.storage_path)) return res.status(404).json({ message: '文件本体不存在' });
     res.download(document.storage_path, document.original_name);
+  }));
+
+  // Inline preview for images and PDFs. Other file types can still be downloaded.
+  app.get('/api/documents/:id/preview', authenticate, asyncRoute(async (req, res) => {
+    const [[document]] = await getPool().execute(
+      `SELECT d.* FROM documents d WHERE d.id = ? AND d.status = 'active'`, [req.params.id]
+    );
+    if (!document || (document.visibility !== 'all' && document.created_by !== req.user.id && !['admin', 'manager'].includes(req.user.role))) {
+      return res.status(404).json({ message: '资料不存在或无权访问' });
+    }
+    if (!document.storage_path || !fs.existsSync(document.storage_path)) return res.status(404).json({ message: '文件本体不存在' });
+    const ext = String(document.file_ext || path.extname(document.original_name || '').slice(1)).toLowerCase();
+    const previewable = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
+    if (!previewable) return res.status(415).json({ message: '此文件类型暂不支持在线预览，请下载后查看' });
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(document.original_name)}`);
+    if (document.mime_type) res.type(document.mime_type);
+    res.sendFile(path.resolve(document.storage_path));
+  }));
+
+  // Folder metadata is derived from active documents; empty folders are never created.
+  app.get('/api/document-folders', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().execute(
+      `SELECT archive_category AS archiveCategory, archive_date AS archiveDate,
+              archive_folder AS archiveFolder, COUNT(*) AS fileCount
+       FROM documents d
+       WHERE d.status = 'active' AND (d.visibility = 'all' OR d.created_by = ? OR ? IN ('admin','manager'))
+       GROUP BY archive_category, archive_date, archive_folder
+       ORDER BY archive_date DESC, archive_category, archive_folder`,
+      [req.user.id, req.user.role]
+    );
+    res.json({ folders: rows.map(row => ({ ...row, fileCount: Number(row.fileCount || 0) })) });
+  }));
+
+  // Rename a file and/or move it to another business folder without exposing disk paths.
+  app.patch('/api/documents/:id', authenticate, asyncRoute(async (req, res) => {
+    const [[document]] = await getPool().execute(
+      `SELECT * FROM documents WHERE id = ? AND status = 'active'`, [req.params.id]
+    );
+    if (!document) return res.status(404).json({ message: '资料不存在' });
+    if (document.created_by !== req.user.id && !['admin', 'manager', 'purchaser'].includes(req.user.role)) return res.status(403).json({ message: '无权修改此资料' });
+    const requestedName = req.body?.name == null ? document.original_name : String(req.body.name).trim();
+    const requestedFolder = req.body?.folder == null ? document.archive_folder : String(req.body.folder).trim();
+    const oldName = path.basename(document.original_name || '资料');
+    let safeName = path.basename(requestedName || oldName).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+    if (!safeName) return res.status(400).json({ message: '文件名不能为空' });
+    if (!path.extname(safeName) && path.extname(oldName)) safeName += path.extname(oldName);
+    const safeFolder = safeArchivePart(requestedFolder || document.archive_folder || '未分类');
+    const archiveDate = localDate(document.archive_date || document.created_at);
+    const archiveCategory = document.archive_category || document.category || '其他资料';
+    const targetPath = archiveStoragePath(config.storageDir, archiveCategory, archiveDate, safeFolder, safeName);
+    if (path.resolve(targetPath) !== path.resolve(document.storage_path) && fs.existsSync(targetPath)) return res.status(409).json({ message: '目标位置已存在同名文件' });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    if (document.storage_path && fs.existsSync(document.storage_path) && path.resolve(document.storage_path) !== path.resolve(targetPath)) fs.renameSync(document.storage_path, targetPath);
+    await getPool().execute(
+      `UPDATE documents SET original_name = ?, archive_name = ?, archive_folder = ?, storage_path = ?, file_ext = ?, updated_at = ?, version_no = version_no + 1 WHERE id = ?`,
+      [safeName, safeName, safeFolder, targetPath, path.extname(safeName).slice(1).toLowerCase() || null, now(), document.id]
+    );
+    res.json({ ok: true, id: document.id, originalName: safeName, archiveFolder: safeFolder, archiveDate });
+  }));
+
+  // Rename an entire derived folder (all files in it move together).
+  app.patch('/api/document-folders', authenticate, asyncRoute(async (req, res) => {
+    const category = archiveCategoryLabel(req.body?.archiveCategory || req.body?.category);
+    const date = localDate(req.body?.archiveDate || now());
+    const oldFolder = safeArchivePart(req.body?.archiveFolder);
+    const newFolder = safeArchivePart(req.body?.newName || req.body?.folder);
+    if (!req.body?.archiveFolder || !req.body?.newName || !newFolder) return res.status(400).json({ message: '请提供原文件夹和新名称' });
+    const [documents] = await getPool().execute(
+      `SELECT * FROM documents WHERE status = 'active' AND archive_category = ? AND archive_date = ? AND archive_folder = ?`,
+      [category, date, oldFolder]
+    );
+    if (!documents.length) return res.status(404).json({ message: '文件夹不存在或没有可见文件' });
+    if (documents.some(document => document.created_by !== req.user.id) && !['admin', 'manager', 'purchaser'].includes(req.user.role)) return res.status(403).json({ message: '无权修改此文件夹' });
+    const oldDir = path.dirname(documents[0].storage_path);
+    const newDir = archiveStoragePath(config.storageDir, category, date, newFolder, 'placeholder');
+    if (path.resolve(oldDir) !== path.resolve(path.dirname(newDir)) && fs.existsSync(path.dirname(newDir))) return res.status(409).json({ message: '目标文件夹已存在' });
+    fs.mkdirSync(path.dirname(newDir), { recursive: true });
+    if (path.resolve(oldDir) !== path.resolve(path.dirname(newDir)) && fs.existsSync(oldDir)) fs.renameSync(oldDir, path.dirname(newDir));
+    for (const document of documents) {
+      const nextPath = path.join(path.dirname(newDir), path.basename(document.storage_path));
+      await getPool().execute('UPDATE documents SET archive_folder = ?, storage_path = ?, updated_at = ?, version_no = version_no + 1 WHERE id = ?', [newFolder, nextPath, now(), document.id]);
+    }
+    res.json({ ok: true, archiveCategory: category, archiveDate: date, archiveFolder: newFolder, fileCount: documents.length });
   }));
 
   app.delete('/api/documents/:id', authenticate, asyncRoute(async (req, res) => {
