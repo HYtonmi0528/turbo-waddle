@@ -93,8 +93,10 @@ function ensureExportColumns(sheet, headerRow) {
       cell.value = definition.label;
       cell.style = cloneStyle(headerStyleSource.style);
       cell.alignment = { ...(cell.alignment || {}), horizontal: 'center', vertical: 'middle', wrapText: true };
-      sheet.getColumn(colNo).width = field === 'remarks' ? 28 : 14;
     }
+    // 既有表头列也要重新设置宽度，否则 Excel 会把金额显示成 ####。
+    sheet.getColumn(colNo).width = field === 'remarks' ? 36 : 18;
+    sheet.getColumn(colNo).alignment = { ...(sheet.getColumn(colNo).alignment || {}), vertical: 'middle' };
     columns[field] = colNo;
   }
   return columns;

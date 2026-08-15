@@ -594,9 +594,9 @@ async function fillRfqWorkbook({
   applyHeaderStyle(worksheet.getCell(headerRowNum, totalRmbCol), '总价');
   applyHeaderStyle(worksheet.getCell(headerRowNum, notesCol), '备注');
 
-  worksheet.getColumn(fobCol).width = 16;
-  worksheet.getColumn(totalRmbCol).width = 18;
-  worksheet.getColumn(notesCol).width = 22;
+  worksheet.getColumn(fobCol).width = Math.max(Number(worksheet.getColumn(fobCol).width) || 0, 18);
+  worksheet.getColumn(totalRmbCol).width = Math.max(Number(worksheet.getColumn(totalRmbCol).width) || 0, 20);
+  worksheet.getColumn(notesCol).width = Math.max(Number(worksheet.getColumn(notesCol).width) || 0, 36);
   worksheet.getColumn(fobCol).hidden = false;
   worksheet.getColumn(totalRmbCol).hidden = false;
   worksheet.getColumn(notesCol).hidden = false;
@@ -675,7 +675,7 @@ async function fillRfqWorkbook({
       const fobCell = worksheet.getCell(rowNumber, fobCol);
       fobCell.value = Number(fobValue.toFixed(2));
       fobCell.numFmt = '$#,##0.00';
-      fobCell.alignment = { horizontal: 'right', vertical: 'middle' };
+      fobCell.alignment = { horizontal: 'right', vertical: 'middle', shrinkToFit: true };
       fobCell.border = dataBorder;
     }
 
@@ -685,7 +685,7 @@ async function fillRfqWorkbook({
       const rmbCell = worksheet.getCell(rowNumber, totalRmbCol);
       rmbCell.value = Number(numericValue(rmbValue).toFixed(2));
       rmbCell.numFmt = '¥#,##0.00';
-      rmbCell.alignment = { horizontal: 'right', vertical: 'middle' };
+      rmbCell.alignment = { horizontal: 'right', vertical: 'middle', shrinkToFit: true };
       rmbCell.border = dataBorder;
     }
 
