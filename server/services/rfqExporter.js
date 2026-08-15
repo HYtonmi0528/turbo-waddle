@@ -138,6 +138,8 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
     row.getCell(columns.remarks).value = completed.remarks || null;
     row.getCell(columns.fobUsd).numFmt = '$#,##0.00';
     row.getCell(columns.totalRmb).numFmt = '¥#,##0.00';
+    row.getCell(columns.fobUsd).alignment = { ...(row.getCell(columns.fobUsd).alignment || {}), horizontal: 'right', vertical: 'middle', shrinkToFit: true };
+    row.getCell(columns.totalRmb).alignment = { ...(row.getCell(columns.totalRmb).alignment || {}), horizontal: 'right', vertical: 'middle', shrinkToFit: true };
     row.getCell(columns.remarks).alignment = { ...(row.getCell(columns.remarks).alignment || {}), wrapText: true, vertical: 'top' };
 
     const attachments = Array.isArray(completed.attachments) ? completed.attachments : [];
@@ -175,6 +177,20 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
     }
   }
 
+  // 根据实际内容再次放宽导出列，兼容原始文件中很窄的金额列。
+  for (const { sheet, columns } of columnsByTable.values()) {
+    for (const [field, colNo] of Object.entries(columns)) {
+      const minimum = field === 'remarks' ? 36 : 22;
+      let longest = 0;
+      for (let rowNo = 1; rowNo <= sheet.rowCount; rowNo += 1) {
+        const value = cellScalar(sheet.getRow(rowNo).getCell(colNo));
+        longest = Math.max(longest, String(value || '').length);
+      }
+      sheet.getColumn(colNo).width = Math.max(minimum, Math.min(48, longest + 3));
+    }
+  }
+  workbook.calcProperties.fullCalcOnLoad = true;
+  workbook.calcProperties.forceFullCalc = true;
   await workbook.xlsx.writeFile(outputPath);
   const tables = [...columnsByTable.values()].map(({ sheet: tableSheet, headerRow, columns }) => ({
     sheetName: tableSheet.name,

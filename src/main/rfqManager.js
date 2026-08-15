@@ -597,6 +597,8 @@ async function fillRfqWorkbook({
   worksheet.getColumn(fobCol).width = Math.max(Number(worksheet.getColumn(fobCol).width) || 0, 18);
   worksheet.getColumn(totalRmbCol).width = Math.max(Number(worksheet.getColumn(totalRmbCol).width) || 0, 20);
   worksheet.getColumn(notesCol).width = Math.max(Number(worksheet.getColumn(notesCol).width) || 0, 36);
+  if (header.columns.unitPriceUsd) worksheet.getColumn(header.columns.unitPriceUsd).width = Math.max(Number(worksheet.getColumn(header.columns.unitPriceUsd).width) || 0, 18);
+  if (header.columns.totalPriceUsd) worksheet.getColumn(header.columns.totalPriceUsd).width = Math.max(Number(worksheet.getColumn(header.columns.totalPriceUsd).width) || 0, 20);
   worksheet.getColumn(fobCol).hidden = false;
   worksheet.getColumn(totalRmbCol).hidden = false;
   worksheet.getColumn(notesCol).hidden = false;
@@ -635,6 +637,7 @@ async function fillRfqWorkbook({
       const unitPriceCell = worksheet.getCell(rowNumber, header.columns.unitPriceUsd);
       unitPriceCell.value = Number(fobValue.toFixed(2));
       unitPriceCell.numFmt = '$#,##0.00';
+      unitPriceCell.alignment = { ...(unitPriceCell.alignment || {}), horizontal: 'right', vertical: 'middle', shrinkToFit: true };
     }
     if (fobValue && header.columns.totalPriceUsd && header.columns.quantity) {
       const quantity = numericValue(worksheet.getCell(rowNumber, header.columns.quantity).value);
@@ -644,6 +647,7 @@ async function fillRfqWorkbook({
         result: Number((fobValue * quantity).toFixed(2))
       };
       totalPriceCell.numFmt = '$#,##0.00';
+      totalPriceCell.alignment = { ...(totalPriceCell.alignment || {}), horizontal: 'right', vertical: 'middle', shrinkToFit: true };
     }
 
     writeCell(
