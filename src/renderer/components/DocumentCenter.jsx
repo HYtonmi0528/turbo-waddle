@@ -58,14 +58,14 @@ export default function DocumentCenter() {
 
   const previewDocument = async document => {
     const ext = String(document.fileExt || '').toLowerCase();
-    if (!['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext)) {
+    if (!['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'xlsx', 'csv', 'tsv'].includes(ext)) {
       setError(t('previewUnsupported'));
       return;
     }
     try {
       const result = await window.electronAPI.collaboration.previewDocument(document);
       if (result?.filePath && !result?.url) { setMessage(t('previewOpened')); return; }
-      setPreview({ document, url: result?.url || `/api/documents/${encodeURIComponent(document.id)}/preview`, kind: ext === 'pdf' ? 'pdf' : 'image' });
+      setPreview({ document, url: result?.url || `/api/documents/${encodeURIComponent(document.id)}/preview`, kind: ext === 'pdf' ? 'pdf' : ['xlsx', 'csv', 'tsv'].includes(ext) ? 'spreadsheet' : 'image' });
     } catch (e) { setError(e.message || t('previewError')); }
   };
 
@@ -132,7 +132,7 @@ export default function DocumentCenter() {
           return <section className="document-archive-group" key={group.key}>
             <div className="document-archive-folder"><button className="document-folder-toggle" onClick={() => setExpanded(value => ({ ...value, [group.key]: !isExpanded }))}><span>{isExpanded ? '▼' : '▶'} {group.categoryName} / {group.date} / {group.folder}</span><span>{t('fileCount', { count: group.documents.length })}</span></button><button className="btn btn-ghost btn-sm" onClick={() => renameFolder(group)}>{t('renameFolder')}</button></div>
             {isExpanded && <div className="document-grid">{group.documents.map(document => <article className="document-card" key={document.id}>
-              <div className="document-icon">{['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(String(document.fileExt).toLowerCase()) ? '🖼' : '📄'}</div>
+              <div className="document-icon">{['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(String(document.fileExt).toLowerCase()) ? '🖼' : ['xlsx', 'csv', 'tsv'].includes(String(document.fileExt).toLowerCase()) ? '📊' : '📄'}</div>
               <div className="document-main"><h3 title={document.originalName}>{document.originalName}</h3><div className="document-meta"><span>{document.archiveCategory || document.category || t('uncategorized')}</span><span>{formatSize(document.fileSize)}</span><span>v{document.versionNo || 1}</span></div><div className="document-meta text-muted"><span>{document.createdByName || '—'}</span><span>{formatDate(document.createdAt, language)}</span></div></div>
               <div className="document-actions"><button className="btn btn-outline btn-sm" onClick={() => previewDocument(document)}>{t('preview')}</button><button className="btn btn-outline btn-sm" onClick={() => download(document)}>{t('download')}</button><button className="btn btn-ghost btn-sm" onClick={() => renameDocument(document)}>{t('rename')}</button><button className="btn btn-ghost btn-sm" onClick={() => remove(document)}>{t('moveToRecycle')}</button></div>
             </article>)}</div>}

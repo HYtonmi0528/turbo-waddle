@@ -1501,7 +1501,7 @@ function createApp() {
     res.download(document.storage_path, document.original_name);
   }));
 
-  // Inline preview for images and PDFs. Other file types can still be downloaded.
+  // Inline preview for images, PDFs, and read-only table snapshots.
   app.get('/api/documents/:id/preview', authenticate, asyncRoute(async (req, res) => {
     const [[document]] = await getPool().execute(
       `SELECT d.* FROM documents d WHERE d.id = ? AND d.status = 'active'`, [req.params.id]
@@ -1511,6 +1511,46 @@ function createApp() {
     }
     if (!document.storage_path || !fs.existsSync(document.storage_path)) return res.status(404).json({ message: '文件本体不存在' });
     const ext = String(document.file_ext || path.extname(document.original_name || '').slice(1)).toLowerCase();
+    const spreadsheet = ['xlsx', 'csv', 'tsv'].includes(ext);
+    if (spreadsheet) {
+      const escapeHtml = value => String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const valueText = value => {
+        if (value == null) return '';
+        if (typeof value === 'object') {
+          if (Array.isArray(value.richText)) return value.richText.map(entry => entry.text || '').join('');
+          if (value.result != null) return value.result;
+          if (value.text != null) return value.text;
+        }
+        return value;
+      };
+      const renderTable = (name, rows) => `<section><h2>${escapeHtml(name)}</h2><div class="sheet-scroll"><table><tbody>${rows.map((row, rowIndex) => `<tr>${row.map(cell => `<${rowIndex === 0 ? 'th' : 'td'}>${escapeHtml(valueText(cell))}</${rowIndex === 0 ? 'th' : 'td'}>`).join('')}</tr>`).join('')}</tbody></table></div></section>`;
+      let sections = '';
+      if (ext === 'xlsx') {
+        const ExcelJS = require('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(document.storage_path);
+        sections = workbook.worksheets.map(sheet => {
+          const rows = [];
+          sheet.eachRow({ includeEmpty: false }, row => {
+            if (rows.length >= 200) return;
+            const values = [];
+            for (let column = 1; column <= Math.min(sheet.columnCount || 1, 40); column += 1) values.push(row.getCell(column).value);
+            while (values.length && (values[values.length - 1] == null || values[values.length - 1] === '')) values.pop();
+            if (values.length) rows.push(values);
+          });
+          return renderTable(sheet.name, rows);
+        }).join('');
+      } else {
+        const text = fs.readFileSync(document.storage_path, 'utf8').replace(/^\uFEFF/, '');
+        const delimiter = ext === 'tsv' ? '\t' : ',';
+        const rows = text.split(/\r?\n/).filter(Boolean).slice(0, 200).map(line => line.split(delimiter).slice(0, 40));
+        sections = renderTable(document.original_name, rows);
+      }
+      res.type('html').send(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(document.original_name)}</title><style>body{font:14px system-ui,sans-serif;margin:24px;color:#17365d;background:#f5f8fc}h1{font-size:20px}.sheet-scroll{overflow:auto;background:#fff;border:1px solid #dbe4ef;border-radius:10px;margin-bottom:22px}table{border-collapse:collapse;min-width:600px}th,td{border:1px solid #dbe4ef;padding:7px 10px;white-space:pre-wrap;text-align:left;vertical-align:top}th{background:#eaf1fb;font-weight:650}</style></head><body><h1>${escapeHtml(document.original_name)}</h1>${sections || '<p>文件没有可显示的内容。</p>'}</body></html>`);
+      return;
+    }
     const previewable = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
     if (!previewable) return res.status(415).json({ message: '此文件类型暂不支持在线预览，请下载后查看' });
     res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(document.original_name)}`);
