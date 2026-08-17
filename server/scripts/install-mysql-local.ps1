@@ -115,6 +115,9 @@ CREATE DATABASE IF NOT EXISTS latic_rfq CHARACTER SET utf8mb4 COLLATE utf8mb4_09
 CREATE USER IF NOT EXISTS 'latic_rfq_app'@'127.0.0.1' IDENTIFIED BY '$appPassword';
 ALTER USER 'latic_rfq_app'@'127.0.0.1' IDENTIFIED BY '$appPassword';
 GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON latic_rfq.* TO 'latic_rfq_app'@'127.0.0.1';
+CREATE USER IF NOT EXISTS 'latic_rfq_app'@'localhost' IDENTIFIED BY '$appPassword';
+ALTER USER 'latic_rfq_app'@'localhost' IDENTIFIED BY '$appPassword';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON latic_rfq.* TO 'latic_rfq_app'@'localhost';
 FLUSH PRIVILEGES;
 "@
 & $mysql -u root --skip-password --execute=$initialSql

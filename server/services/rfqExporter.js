@@ -44,6 +44,15 @@ function lastMeaningfulColumn(sheet) {
   return maxColumn;
 }
 
+// 多个表格/大类共用一个工作表时，只按当前表头行计算追加列。
+function lastMeaningfulHeaderColumn(row) {
+  let maxColumn = 1;
+  row.eachCell({ includeEmpty: false }, (cell, colNo) => {
+    if (normalize(cellScalar(cell))) maxColumn = Math.max(maxColumn, colNo);
+  });
+  return maxColumn;
+}
+
 function lastPopulatedColumn(row, maximum) {
   for (let colNo = maximum; colNo >= 1; colNo -= 1) {
     if (normalize(cellScalar(row.getCell(colNo)))) return colNo;
@@ -69,7 +78,7 @@ function findHeaderColumn(sheet, headerRow, aliases) {
 
 function ensureExportColumns(sheet, headerRow) {
   const columns = {};
-  const meaningfulColumn = lastMeaningfulColumn(sheet);
+  const meaningfulColumn = lastMeaningfulHeaderColumn(sheet.getRow(headerRow));
   let nextColumn = meaningfulColumn + 1;
   const header = sheet.getRow(headerRow);
   const headerStyleColumn = lastStyledColumn(header, lastPopulatedColumn(header, meaningfulColumn));
@@ -84,8 +93,10 @@ function ensureExportColumns(sheet, headerRow) {
       cell.value = definition.label;
       cell.style = cloneStyle(headerStyleSource.style);
       cell.alignment = { ...(cell.alignment || {}), horizontal: 'center', vertical: 'middle', wrapText: true };
-      sheet.getColumn(colNo).width = field === 'remarks' ? 28 : 14;
     }
+    // 既有表头列也要重新设置宽度，否则 Excel 会把金额显示成 ####。
+    sheet.getColumn(colNo).width = field === 'remarks' ? 36 : 18;
+    sheet.getColumn(colNo).alignment = { ...(sheet.getColumn(colNo).alignment || {}), vertical: 'middle' };
     columns[field] = colNo;
   }
   return columns;
@@ -95,13 +106,27 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
   const imported = await importRfqWorkbook(sourcePath);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(sourcePath);
-  const sheet = workbook.getWorksheet(imported.sheetName);
-  if (!sheet) throw new Error('原始询价单工作表不存在');
-  const columns = ensureExportColumns(sheet, imported.headerRow);
+  const firstSheet = workbook.getWorksheet(imported.sheetName);
+  if (!firstSheet) throw new Error('原始询价单工作表不存在');
+  const columnsByTable = new Map();
+  const getTable = (item) => {
+    const sheetName = item.sourceSheetName || item.source?.sourceSheetName || imported.sheetName;
+    const headerRow = Number(item.sourceHeaderRow || item.source?.sourceHeaderRow || imported.headerRow);
+    const key = `${sheetName}\u0000${headerRow}`;
+    if (!columnsByTable.has(key)) {
+      const targetSheet = workbook.getWorksheet(sheetName);
+      if (!targetSheet) return null;
+      columnsByTable.set(key, { sheet: targetSheet, headerRow, columns: ensureExportColumns(targetSheet, headerRow) });
+    }
+    return columnsByTable.get(key);
+  };
 
   for (const completed of completedItems) {
     const importedItem = imported.items.find(item => Number(item.lineNo) === Number(completed.lineNo));
     if (!importedItem) continue;
+    const table = getTable(importedItem);
+    if (!table) continue;
+    const { sheet, columns } = table;
     const row = sheet.getRow(importedItem.sourceRow);
     const styleColumn = lastStyledColumn(row, columns.fobUsd - 1);
     const styleSource = row.getCell(styleColumn);
@@ -113,6 +138,8 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
     row.getCell(columns.remarks).value = completed.remarks || null;
     row.getCell(columns.fobUsd).numFmt = '$#,##0.00';
     row.getCell(columns.totalRmb).numFmt = '¥#,##0.00';
+    row.getCell(columns.fobUsd).alignment = { ...(row.getCell(columns.fobUsd).alignment || {}), horizontal: 'right', vertical: 'middle', shrinkToFit: true };
+    row.getCell(columns.totalRmb).alignment = { ...(row.getCell(columns.totalRmb).alignment || {}), horizontal: 'right', vertical: 'middle', shrinkToFit: true };
     row.getCell(columns.remarks).alignment = { ...(row.getCell(columns.remarks).alignment || {}), wrapText: true, vertical: 'top' };
 
     const attachments = Array.isArray(completed.attachments) ? completed.attachments : [];
@@ -150,8 +177,33 @@ async function exportCompletedRfq(sourcePath, outputPath, completedItems) {
     }
   }
 
+  // 根据实际内容再次放宽导出列，兼容原始文件中很窄的金额列。
+  for (const { sheet, columns } of columnsByTable.values()) {
+    for (const [field, colNo] of Object.entries(columns)) {
+      const minimum = field === 'remarks' ? 36 : 22;
+      let longest = 0;
+      for (let rowNo = 1; rowNo <= sheet.rowCount; rowNo += 1) {
+        const value = cellScalar(sheet.getRow(rowNo).getCell(colNo));
+        longest = Math.max(longest, String(value || '').length);
+      }
+      sheet.getColumn(colNo).width = Math.max(minimum, Math.min(48, longest + 3));
+    }
+  }
+  workbook.calcProperties.fullCalcOnLoad = true;
+  workbook.calcProperties.forceFullCalc = true;
   await workbook.xlsx.writeFile(outputPath);
-  return { sheetName: sheet.name, headerRow: imported.headerRow, columns };
+  const tables = [...columnsByTable.values()].map(({ sheet: tableSheet, headerRow, columns }) => ({
+    sheetName: tableSheet.name,
+    headerRow,
+    columns
+  }));
+  return {
+    sheetName: imported.sheetName,
+    headerRow: imported.headerRow,
+    // Keep the legacy single-table response while exposing every detected table.
+    columns: tables[0]?.columns,
+    tables
+  };
 }
 
 module.exports = { exportCompletedRfq, EXPORT_FIELDS };

@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     restoreSession: () => ipcRenderer.invoke('collaboration:restoreSession'),
     setupAdmin: (payload) => ipcRenderer.invoke('collaboration:setupAdmin', payload),
     register: (payload) => ipcRenderer.invoke('collaboration:register', payload),
+    registerRole: (payload) => ipcRenderer.invoke('collaboration:registerRole', payload),
     login: (payload) => ipcRenderer.invoke('collaboration:login', payload),
     logout: () => ipcRenderer.invoke('collaboration:logout'),
     getRememberedLogin: () => ipcRenderer.invoke('collaboration:getRememberedLogin'),
@@ -21,8 +22,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listTasks: () => ipcRenderer.invoke('collaboration:listTasks'),
     getTask: (taskId) => ipcRenderer.invoke('collaboration:getTask', taskId),
     importTask: (metadata) => ipcRenderer.invoke('collaboration:importTask', metadata),
+    listExternalSubmissions: () => ipcRenderer.invoke('collaboration:listExternalSubmissions'),
+    submitExternalRfq: (payload) => ipcRenderer.invoke('collaboration:submitExternalRfq', payload),
+    acceptExternalSubmission: (id, payload) => ipcRenderer.invoke('collaboration:acceptExternalSubmission', id, payload),
+    rejectExternalSubmission: (id, reason) => ipcRenderer.invoke('collaboration:rejectExternalSubmission', id, reason),
+    listDocuments: (params = {}) => ipcRenderer.invoke('collaboration:listDocuments', params),
+    uploadDocument: (metadata = {}) => ipcRenderer.invoke('collaboration:uploadDocument', metadata),
+    downloadDocument: (document) => ipcRenderer.invoke('collaboration:downloadDocument', document),
+    previewDocument: (document) => ipcRenderer.invoke('collaboration:previewDocument', document),
+    renameDocument: (id, payload) => ipcRenderer.invoke('collaboration:renameDocument', id, payload),
+    listDocumentFolders: () => ipcRenderer.invoke('collaboration:listDocumentFolders'),
+    renameDocumentFolder: (payload) => ipcRenderer.invoke('collaboration:renameDocumentFolder', payload),
+    deleteDocument: (id) => ipcRenderer.invoke('collaboration:deleteDocument', id),
     updateTaskItem: (taskId, itemId, payload) =>
       ipcRenderer.invoke('collaboration:updateTaskItem', taskId, itemId, payload),
+    assignTaskItem: (taskId, itemId, assignedUserId) =>
+      ipcRenderer.invoke('collaboration:assignTaskItem', taskId, itemId, assignedUserId),
     uploadTaskAttachment: (taskId, itemId) =>
       ipcRenderer.invoke('collaboration:uploadTaskAttachment', taskId, itemId),
     uploadTaskAttachmentPath: (taskId, itemId, filePath) =>

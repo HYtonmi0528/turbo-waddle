@@ -5,65 +5,19 @@ import AccountAdmin from './AccountAdmin';
 import RemoteTemplates from './RemoteTemplates';
 import DatabaseBrowser from './DatabaseBrowser';
 import Dashboard from './Dashboard';
+import ExternalInbox from './ExternalInbox';
+import OverseasRfqSubmit from './OverseasRfqSubmit';
+import DocumentCenter from './DocumentCenter';
 import appLogo from '../../../assets/app-logo.png';
+import { languageOptions, useI18n } from '../i18n';
 
 function cleanError(error) {
   return String(error?.message || error || '操作失败')
     .replace(/^Error invoking remote method '[^']+':\s*Error:\s*/i, '');
 }
 
-function ConnectionScreen({ initialUrl, onConnected }) {
-  const [serverUrl, setServerUrl] = useState(initialUrl || '');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-
-  const connect = async event => {
-    event.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      const result = await window.electronAPI.collaboration.configure(serverUrl);
-      onConnected(result);
-    } catch (e) {
-      setError(cleanError(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="collab-auth-page">
-      <div className="collab-auth-card">
-        <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
-        <h1>连接询价协作服务器</h1>
-        <p>当前电脑作为服务器时使用本机地址；其他员工电脑填写服务器的局域网IP。</p>
-        <form onSubmit={connect}>
-          <label className="form-label" htmlFor="server-url">服务器地址</label>
-          <input
-            id="server-url"
-            className="form-input"
-            value={serverUrl}
-            onChange={event => setServerUrl(event.target.value)}
-            placeholder="http://192.168.1.100:3210"
-            required
-          />
-          <div className="collab-connection-help">
-            管理员和员工都填写同一个团队服务器地址。<br />
-            只有数据库服务运行在当前电脑时，才能使用 http://127.0.0.1:3210
-          </div>
-          <button type="button" className="btn btn-outline collab-full-button" onClick={() => setServerUrl('http://127.0.0.1:3210')}>这台电脑运行服务器，使用本机地址</button>
-          {error && <div className="collab-form-error">{error}</div>}
-          <button className="btn btn-primary btn-lg collab-full-button" disabled={busy}>
-            {busy ? '正在测试连接…' : '测试并保存连接'}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
-}
-
-function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
-  const [entrance, setEntrance] = useState('employee');
+function AccessScreen({ setup, onLogin, onRefreshSetup }) {
+  const { language, setLanguage, t } = useI18n();
   const getInitialMode = value => value?.initialized ? 'login' : 'choose-setup';
   const [mode, setMode] = useState(getInitialMode(setup));
   const [form, setForm] = useState({ username: '', displayName: '', password: '' });
@@ -72,6 +26,7 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
   const [message, setMessage] = useState('');
   const [rememberMe, setRememberMe] = useState(false);
   const [registerRole, setRegisterRole] = useState('viewer');
+  const [registrationToken, setRegistrationToken] = useState('');
 
   const update = (key, value) => setForm(current => ({ ...current, [key]: value }));
 
@@ -81,7 +36,6 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
       if (saved) {
         setForm(current => ({ ...current, username: saved.username }));
         setRememberMe(true);
-        if (saved.entrance) setEntrance(saved.entrance);
       }
     })();
   }, []);
@@ -99,17 +53,20 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
       if (mode === 'setup') {
         await window.electronAPI.collaboration.setupAdmin(form);
         setMessage('管理员创建成功，请使用管理员入口登录。');
-        setEntrance('admin');
         setMode('login');
       } else if (mode === 'register') {
-        const result = await window.electronAPI.collaboration.register({ ...form, role: registerRole });
-        setMessage(result.message || '注册成功，请等待管理员启用账号。');
+        const result = await window.electronAPI.collaboration.register({ ...form });
+        setRegistrationToken(result.registrationToken);
+        setMessage(result.message || t('chooseRole'));
+        setMode('register-role');
+      } else if (mode === 'register-role') {
+        const result = await window.electronAPI.collaboration.registerRole({ registrationToken, role: registerRole });
+        setMessage(result.message || t('approval'));
         setMode('login');
       } else {
         const result = await window.electronAPI.collaboration.login({
           username: form.username,
           password: form.password,
-          entrance,
           remember: rememberMe
         });
         onLogin(result.user);
@@ -124,14 +81,14 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
   return (
     <div className="collab-auth-page">
       <div className="collab-auth-card collab-login-card">
+        <label className="collab-auth-language"><span>{t('language')}</span><select value={language} onChange={e => setLanguage(e.target.value)}>{languageOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         <img src={appLogo} alt="LATIC" className="collab-auth-logo" />
-        <h1>{mode === 'setup' ? '创建初始管理员' : mode === 'choose-setup' ? '系统尚未初始化' : mode === 'waiting' ? '等待负责人初始化' : mode === 'register' ? '员工注册' : '登录询价协作系统'}</h1>
+        <h1>{mode === 'setup' ? t('setupTitle') : mode === 'choose-setup' ? t('notInitialized') : mode === 'waiting' ? t('waitingSetup') : mode === 'register' ? t('registerTitle') : mode === 'register-role' ? t('chooseRoleTitle') : t('loginTitle')}</h1>
         {mode === 'choose-setup' && (
           <div className="collab-waiting-setup">
             <p>团队中只需要一位负责人创建第一个管理员账号，管理员不必使用服务器电脑。</p>
             <button type="button" className="btn btn-primary btn-lg collab-full-button" onClick={() => setMode('setup')}>我是负责人，创建初始管理员</button>
             <button type="button" className="btn btn-outline collab-full-button" onClick={() => setMode('waiting')}>我是员工，等待负责人创建</button>
-            <button type="button" className="btn btn-outline collab-full-button" onClick={onReconfigure}>← 返回服务器连接</button>
           </div>
         )}
         {mode === 'waiting' && (
@@ -139,66 +96,58 @@ function AccessScreen({ setup, onLogin, onReconfigure, onRefreshSetup }) {
             <p>请等待负责人在任意一台已连接团队服务器的电脑上创建初始管理员。</p>
             <button type="button" className="btn btn-primary btn-lg collab-full-button" onClick={onRefreshSetup}>重新检查</button>
             <button type="button" className="btn btn-outline collab-full-button" onClick={() => setMode('choose-setup')}>← 返回身份选择</button>
-            <button type="button" className="btn btn-outline collab-full-button" onClick={onReconfigure}>← 返回服务器连接</button>
-          </div>
-        )}
-        {mode === 'login' && (
-          <div className="collab-entrance-switch">
-            <button type="button" className={entrance === 'employee' ? 'active' : ''} onClick={() => setEntrance('employee')}>普通员工入口</button>
-            <button type="button" className={entrance === 'admin' ? 'active' : ''} onClick={() => setEntrance('admin')}>管理员入口</button>
           </div>
         )}
         {mode !== 'waiting' && mode !== 'choose-setup' && <form onSubmit={submit}>
           {(mode === 'setup' || mode === 'register') && (
             <div className="form-group">
-              <label className="form-label" htmlFor="display-name">姓名</label>
+              <label className="form-label" htmlFor="display-name">{t('name')}</label>
               <input id="display-name" className="form-input" value={form.displayName} onChange={event => update('displayName', event.target.value)} required />
             </div>
           )}
-          {mode === 'register' && (
+          {mode === 'register-role' && (
             <div className="form-group">
-              <label className="form-label">角色</label>
+              <label className="form-label">{t('role')}</label>
               <select className="form-select" value={registerRole} onChange={e => setRegisterRole(e.target.value)}>
-                <option value="viewer">查看者（只读）</option>
-                <option value="purchaser">采购员（录入数据）</option>
-                <option value="manager">经理（审批+管理）</option>
-                <option value="admin">管理员（全部权限）</option>
+                <option value="viewer">{t('overseas')}</option>
+                <option value="purchaser">{t('purchaser')}</option>
+                <option value="manager">{t('manager')}</option>
+                <option value="admin">{t('admin')}</option>
               </select>
             </div>
           )}
-          <div className="form-group">
-            <label className="form-label" htmlFor="username">账号</label>
+          {mode !== 'register-role' && <div className="form-group">
+            <label className="form-label" htmlFor="username">{t('account')}</label>
             <input id="username" className="form-input" value={form.username} onChange={event => update('username', event.target.value)} required autoComplete="username" />
-          </div>
-          <div className="form-group">
-            <label className="form-label" htmlFor="password">密码</label>
+          </div>}
+          {mode !== 'register-role' && <div className="form-group">
+            <label className="form-label" htmlFor="password">{t('password')}</label>
             <input id="password" className="form-input" type="password" minLength="8" value={form.password} onChange={event => update('password', event.target.value)} required autoComplete={mode === 'login' ? 'current-password' : 'new-password'} />
-          </div>
+          </div>}
           {mode === 'login' && (
             <label className="form-checkbox">
               <input type="checkbox" checked={rememberMe} onChange={event => setRememberMe(event.target.checked)} />
-              记住密码（下次自动登录）
+              {t('rememberPassword')}
             </label>
           )}
           {error && <div className="collab-form-error">{error}</div>}
           {message && <div className="collab-form-success">{message}</div>}
           <button className="btn btn-primary btn-lg collab-full-button" disabled={busy}>
-            {busy ? '正在处理…' : mode === 'setup' ? '创建管理员' : mode === 'register' ? '提交注册' : '登录'}
+            {busy ? t('processing') : mode === 'setup' ? t('createAdmin') : mode === 'register' ? t('submitRegistration') : mode === 'register-role' ? t('submitRole') : t('login')}
           </button>
         </form>}
         {mode !== 'waiting' && mode !== 'choose-setup' && <div className="collab-auth-links">
           {mode === 'setup' ? (
             <button type="button" onClick={() => setMode('choose-setup')}>← 返回身份选择</button>
-          ) : (
+          ) : mode !== 'register-role' ? (
             <button type="button" onClick={() => {
               setError('');
               setMessage('');
               setMode(mode === 'register' ? 'login' : 'register');
             }}>
-              {mode === 'register' ? '← 返回登录' : '注册普通员工账号'}
+              {mode === 'register' ? t('backToLogin') : t('register')}
             </button>
-          )}
-          {mode !== 'setup' && <button type="button" onClick={onReconfigure}>修改服务器连接</button>}
+          ) : null}
         </div>}
       </div>
     </div>
@@ -224,6 +173,7 @@ function playNotificationSound() {
 }
 
 export default function CollaborationShell() {
+  const { language, setLanguage, t } = useI18n();
   const [showSplash, setShowSplash] = useState(true);
   const [phase, setPhase] = useState('loading');
   const [connection, setConnection] = useState({ serverUrl: '', setup: null });
@@ -240,12 +190,13 @@ export default function CollaborationShell() {
     let mounted = true;
     (async () => {
       try {
-        const setup = await window.electronAPI.collaboration.getState();
+    const setup = await window.electronAPI.collaboration.getState();
         if (!mounted) return;
-        setConnection({ setup });
+        setConnection({ setup: setup.setup || setup });
         const restoredUser = await window.electronAPI.collaboration.restoreSession();
         if (!mounted) return;
         if (restoredUser) {
+          if (restoredUser.role === 'viewer') setLanguage('es-ES');
           setUser(restoredUser);
           setPhase('app');
         } else {
@@ -312,17 +263,21 @@ export default function CollaborationShell() {
   if (phase === 'loading') return <div className="collab-loading">正在启动询价协作系统…</div>;
   if (phase === 'access') {
     return <AccessScreen setup={connection.setup} onLogin={nextUser => {
+      if (nextUser.role === 'viewer') setLanguage('es-ES');
       setUser(nextUser);
+      setActiveArea(nextUser.role === 'viewer' ? 'submit' : 'dashboard');
       firstNotificationLoad.current = true;
       setPhase('app');
       try { Notification.requestPermission(); } catch (_) {}
-    }} onReconfigure={() => setPhase('access')} onRefreshSetup={async () => {
+    }} onRefreshSetup={async () => {
       const result = await window.electronAPI.collaboration.getState();
       setConnection({ setup: result });
     }} />;
   }
 
   const unreadCount = notifications.filter(item => !item.isRead).length;
+  const isManagement = ['admin', 'manager'].includes(user.role);
+  const isOverseas = user.role === 'viewer';
 
   const handleSearch = async (val) => {
     setSearchQuery(val);
@@ -363,25 +318,33 @@ export default function CollaborationShell() {
         </div>
         <div className="collab-user-actions">
           <button className="collab-notification-button" onClick={() => setActiveArea('notifications')}>🔔 {unreadCount > 0 && <span>{unreadCount}</span>}</button>
-          <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? '管理员' : user.role === 'manager' ? '经理' : user.role === 'purchaser' ? '采购员' : '查看者'}</span></div>
+          <div><strong>{user.displayName}</strong><span>{user.role === 'admin' ? t('admin') : user.role === 'manager' ? t('manager') : user.role === 'purchaser' ? t('purchaser') : t('overseas')}</span></div>
+          <label className="collab-language-switcher"><span>{t('language')}</span><select value={language} onChange={e => setLanguage(e.target.value)}>{languageOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <button className="btn btn-outline btn-sm" onClick={logout}>退出</button>
         </div>
       </header>
       <nav className="collab-main-nav">
-        <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>工作台</button>
-        <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>共享询价任务</button>
-        <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>我的账号模板</button>
-        <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>Excel工具</button>
-        {user.role === 'admin' && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>账号管理</button>}
-        <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>数据库</button>
+        {!isOverseas && <button className={activeArea === 'documents' ? 'active' : ''} onClick={() => setActiveArea('documents')}>{t('documents')}</button>}
+        {!isOverseas && <button className={activeArea === 'dashboard' ? 'active' : ''} onClick={() => { setActiveArea('dashboard'); setSearchQuery(''); }}>{t('dashboard')}</button>}
+        {!isOverseas && <button className={activeArea === 'tasks' ? 'active' : ''} onClick={() => setActiveArea('tasks')}>{t('tasks')}</button>}
+        {isOverseas && <button className={activeArea === 'submit' ? 'active' : ''} onClick={() => setActiveArea('submit')}>{t('submitRfq')}</button>}
+        {isOverseas && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>{t('myRfqs')}</button>}
+        {user.role === 'manager' && <button className={activeArea === 'external' ? 'active' : ''} onClick={() => setActiveArea('external')}>{t('external')}</button>}
+        {!isOverseas && <button className={activeArea === 'templates' ? 'active' : ''} onClick={() => setActiveArea('templates')}>{t('templates')}</button>}
+        {!isOverseas && <button className={activeArea === 'legacy' ? 'active' : ''} onClick={() => setActiveArea('legacy')}>{t('excel')}</button>}
+        {isManagement && <button className={activeArea === 'users' ? 'active' : ''} onClick={() => setActiveArea('users')}>{t('accounts')}</button>}
+        {isManagement && <button className={activeArea === 'database' ? 'active' : ''} onClick={() => setActiveArea('database')}>{t('database')}</button>}
       </nav>
       <main className={`collab-shell-main ${activeArea === 'legacy' ? 'legacy-mode' : ''}`}>
-        {activeArea === 'dashboard' && <Dashboard onNavigate={setActiveArea} />}
+        {activeArea === 'dashboard' && !isOverseas && <Dashboard onNavigate={setActiveArea} />}
         {activeArea === 'tasks' && <CollaborationWorkspace user={user} onNotificationsChanged={loadNotifications} onOpenExcelTool={() => setActiveArea('legacy')} searchQuery={searchQuery} />}
+        {activeArea === 'external' && <ExternalInbox user={user} onChanged={loadNotifications} />}
+        {activeArea === 'submit' && isOverseas && <OverseasRfqSubmit />}
+        {activeArea === 'documents' && <DocumentCenter />}
         {activeArea === 'templates' && <RemoteTemplates user={user} />}
         {activeArea === 'legacy' && <App />}
-        {activeArea === 'users' && user.role === 'admin' && <AccountAdmin />}
-        {activeArea === 'database' && <DatabaseBrowser />}
+        {activeArea === 'users' && isManagement && <AccountAdmin />}
+        {activeArea === 'database' && isManagement && <DatabaseBrowser />}
         {activeArea === 'notifications' && (
           <section className="card collab-notification-panel">
             <div className="card-header"><h2 className="card-title">通知中心</h2><button className="btn btn-outline btn-sm" onClick={loadNotifications}>刷新</button></div>

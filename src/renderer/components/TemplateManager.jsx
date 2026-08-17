@@ -148,7 +148,7 @@ export default function TemplateManager({ templates, onRefresh, onSelect, onMapp
                   </div>
                   <div>
                     <div className="template-card-name">{tpl.name}</div>
-                    <div className="text-sm text-muted">{new Date(tpl.updated_at).toLocaleDateString('zh-CN')}</div>
+                    <div className="text-sm text-muted">{(() => { const value = tpl.updatedAt || tpl.updated_at || tpl.createdAt || tpl.created_at; const date = value ? new Date(value) : null; return date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString('zh-CN') : ''; })()}</div>
                   </div>
                 </div>
                 <span className="template-card-type">{tpl.type}</span>

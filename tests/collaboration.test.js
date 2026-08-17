@@ -7,6 +7,40 @@ const ExcelJS = require('exceljs');
 const { hashPassword, verifyPassword, createSessionToken, hashToken } = require('../server/lib/passwords');
 const { importRfqWorkbook } = require('../server/services/rfqImporter');
 const { exportCompletedRfq } = require('../server/services/rfqExporter');
+const { buildGeneratedTemplateStructure } = require('../server/services/templateService');
+const {
+  inferSystemFieldKey,
+  normalizePersistedMapping
+} = require('../src/shared/templateMappings');
+
+test('template mappings accept cloud camelCase, legacy snake_case and Chinese labels', () => {
+  const systemFields = [
+    { key: 'supplierName', label: '供应商名称' },
+    { key: 'model', label: '型号/规格' },
+    { key: 'price', label: '价格/单价' }
+  ];
+
+  assert.deepEqual(
+    normalizePersistedMapping({ templateField: '公司名称', systemField: '公司名称' }, systemFields),
+    { templateField: '公司名称', systemField: 'supplierName' }
+  );
+  assert.deepEqual(
+    normalizePersistedMapping({ template_field: '型号', system_field: 'model' }, systemFields),
+    { templateField: '型号', systemField: 'model' }
+  );
+  assert.equal(inferSystemFieldKey('含税含运（人民币元）', systemFields, { allowUnknown: false }), 'price');
+  assert.equal(inferSystemFieldKey('未知字段', systemFields, { allowUnknown: false }), '');
+});
+
+test('new web templates persist usable headers and mappings', () => {
+  const result = buildGeneratedTemplateStructure(['公司名称', '{{型号}}', '公司名称', '']);
+  assert.deepEqual(result.fields, ['公司名称', '型号']);
+  assert.deepEqual(result.structure.columns.map(column => column.header), ['公司名称', '型号']);
+  assert.deepEqual(result.mappings, [
+    { templateField: '公司名称', systemField: 'supplierName' },
+    { templateField: '型号', systemField: 'model' }
+  ]);
+});
 
 test('passwords are salted and verified without storing plaintext', async () => {
   const first = await hashPassword('TestPassword123');
@@ -62,14 +96,15 @@ test('completed task exports FOB, RMB total and notes next to the original Mexic
     remarks: '供应商测试备注',
     attachments: []
   }]);
-  assert.deepEqual(result.columns, { fobUsd: 17, totalRmb: 18, remarks: 19 });
+  // The three output columns must immediately follow the last real source header.
+  assert.deepEqual(result.columns, { fobUsd: 16, totalRmb: 17, remarks: 18 });
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(outputPath);
   const sheet = workbook.getWorksheet('Sheet1');
-  assert.equal(sheet.getCell('Q7').value, 'FOB');
-  assert.equal(sheet.getCell('R7').value, '总价');
-  assert.equal(sheet.getCell('S7').value, '备注');
-  assert.equal(sheet.getCell('R8').value, 947.1);
-  assert.equal(sheet.getCell('S8').value, '供应商测试备注');
-  assert.ok(Math.abs(sheet.getCell('Q8').value - 115.6057) < 0.001);
+  assert.equal(sheet.getCell('P7').value, 'FOB');
+  assert.equal(sheet.getCell('Q7').value, '总价');
+  assert.equal(sheet.getCell('R7').value, '备注');
+  assert.equal(sheet.getCell('Q8').value, 947.1);
+  assert.equal(sheet.getCell('R8').value, '供应商测试备注');
+  assert.ok(Math.abs(sheet.getCell('P8').value - 115.6057) < 0.001);
 });

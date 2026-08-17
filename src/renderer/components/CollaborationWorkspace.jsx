@@ -66,12 +66,6 @@ function ImportTaskModal({ users, onClose, onImported }) {
   const [exchangeRate, setExchangeRate] = useState('7.25');
   const [invoiceType, setInvoiceType] = useState('special');
   const [selectingItemId, setSelectingItemId] = useState('');
-  const toggleUser = id => setForm(current => ({
-    ...current,
-    assignedUserIds: current.assignedUserIds.includes(id)
-      ? current.assignedUserIds.filter(value => value !== id)
-      : [...current.assignedUserIds, id]
-  }));
   const submit = async event => {
     event.preventDefault();
     setBusy(true);
@@ -95,12 +89,7 @@ function ImportTaskModal({ users, onClose, onImported }) {
           <div className="form-group"><label className="form-label">任务编号（可选）</label><input className="form-input" value={form.taskNo} onChange={event => setForm({ ...form, taskNo: event.target.value })} placeholder="系统可自动生成" /></div>
         </div>
         <div className="form-group"><label className="form-label">截止时间</label><input type="datetime-local" className="form-input" value={form.deadline} onChange={event => setForm({ ...form, deadline: event.target.value })} /></div>
-        <div className="form-group">
-          <label className="form-label">重点负责人（不影响其他员工查看和填写）</label>
-          <div className="collab-assignee-list">{users.filter(user => user.status === 'active').map(user => (
-            <label key={user.id}><input type="checkbox" checked={form.assignedUserIds.includes(user.id)} onChange={() => toggleUser(user.id)} /> {user.displayName}</label>
-          ))}</div>
-        </div>
+        <p className="text-muted text-sm">询价单导入后，请在产品明细中逐行分配采购负责人。</p>
         {error && <div className="collab-form-error">{error}</div>}
         <div className="modal-actions"><button type="button" className="btn btn-outline" onClick={onClose}>取消</button><button className="btn btn-primary" disabled={busy}>{busy ? '正在识别并上传…' : '选择Excel并下发'}</button></div>
       </form>
@@ -171,7 +160,7 @@ function TaskList({ tasks, users, user, onSelect, onRefresh, searchQuery, batchM
   );
 }
 
-function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
+function TaskDetail({ taskId, user, users, onBack, onChanged, onOpenExcelTool }) {
   const [task, setTask] = useState(null);
   const [items, setItems] = useState([]);
   const [audit, setAudit] = useState([]);
@@ -226,8 +215,22 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
   }, [taskId]);
   useEffect(() => { if (tab === 'history') loadAudit(); }, [tab]);
 
-  const updateLocalItem = (id, field, value) => setItems(current => current.map(item => item.id === id ? { ...item, [field]: value, dirty: true } : item));
+  const canEditItem = item => user.role !== 'purchaser' || !item.assignedUserId || item.assignedUserId === user.id;
+  const updateLocalItem = (id, field, value) => setItems(current => current.map(item => {
+    if (item.id !== id) return item;
+    if (!canEditItem(item)) return item;
+    const next = { ...item, [field]: value, dirty: true };
+    if (field === 'totalRmb') {
+      const rmb = numberValue(value);
+      const rate = numberValue(item.exchangeRate || exchangeRate) || 7.25;
+      next.exchangeRate = rate;
+      next.invoiceType = item.invoiceType || invoiceType;
+      next.fobUsd = rmb > 0 ? rmb / rate / (next.invoiceType === 'special' ? 1.13 : 1) : '';
+    }
+    return next;
+  }));
   const saveItem = async item => {
+    if (!canEditItem(item)) { setError('该产品已分配给其他采购专员，不能修改'); return; }
     setSavingId(item.id);
     setError('');
     setMessage('');
@@ -266,6 +269,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
     setInvoiceType(quoteSet?.options?.invoiceType === 'regular' ? 'regular' : 'special');
   };
   const applyCandidate = async (item, candidate) => {
+    if (!canEditItem(item)) { setError('该产品已分配给其他采购专员，不能修改'); return; }
     const totalRmb = candidateRmbValue(candidate, selectedQuoteSet);
     const rate = numberValue(exchangeRate) || 7.25;
     const fobUsd = totalRmb / rate / (invoiceType === 'special' ? 1.13 : 1);
@@ -296,6 +300,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
     } catch (e) { setError(cleanError(e)); } finally { setSavingId(''); }
   };
   const attach = async item => {
+    if (!canEditItem(item)) { setError('该产品已分配给其他采购专员，不能修改'); return; }
     try {
       const result = await window.electronAPI.collaboration.uploadTaskAttachment(task.id, item.id);
       if (!result?.canceled) {
@@ -362,7 +367,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
     <div className="collab-task-detail">
       <div className="collab-detail-toolbar"><button className="btn btn-outline" onClick={onBack}>← 返回任务列表</button><div><span className={`collab-status status-${task.status}`}>{STATUS_LABELS[task.status] || task.status}</span><span className="text-muted text-sm"> 当前版本 V{task.currentVersion}</span></div></div>
       <section className="card collab-task-summary">
-        <div className="card-header"><div><div className="text-sm text-muted">{task.taskNo}</div><h1>{task.title}</h1></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={() => window.electronAPI.collaboration.downloadTaskSource(task)}>下载原始询价单</button><button className="btn btn-outline" onClick={downloadCsv}>导出CSV</button>{user.role === 'admin' && <button className="btn btn-primary" onClick={exportCompleted}>导出已填写询价单</button>}</div></div>
+        <div className="card-header"><div><div className="text-sm text-muted">{task.taskNo}</div><h1>{task.title}</h1></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={() => window.electronAPI.collaboration.downloadTaskSource(task)}>下载原始询价单</button><button className="btn btn-outline" onClick={downloadCsv}>导出CSV</button>{['admin', 'manager', 'purchaser'].includes(user.role) && <button className="btn btn-primary" onClick={exportCompleted}>导出已填写询价单</button>}</div></div>
         <div className="collab-summary-grid"><div><span>请求人</span><strong>{task.requester || '未填写'}</strong></div><div><span>国家</span><strong>{task.country || '未填写'}</strong></div><div><span>客户</span><strong>{task.clientName || '未填写'}</strong></div><div><span>申请日期</span><strong>{formatDate(task.requestDate)}</strong></div><div><span>进口方式</span><strong>{task.importType || '未填写'}</strong></div><div><span>交付方式</span><strong>{task.deliveryType || '未填写'}</strong></div><div><span>付款方式</span><strong>{task.paymentType || '未填写'}</strong></div><div><span>截止时间</span><strong>{formatDate(task.deadline, true)}</strong></div></div>
       </section>
       <div className="collab-detail-tabs"><button className={tab === 'entry' ? 'active' : ''} onClick={() => setTab('entry')}>询价填写</button><button className={tab === 'history' ? 'active' : ''} onClick={() => setTab('history')}>修改记录</button><button className={tab === 'comments' ? 'active' : ''} onClick={() => { setTab('comments'); loadComments(); }}>讨论</button></div>
@@ -370,7 +375,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
       {error && <div className="collab-form-error">{error}</div>}
       {tab === 'entry' ? (
         <section className="card collab-entry-card">
-          <div className="card-header"><div><h2 className="card-title">产品明细</h2><p className="text-muted text-sm">从本机生成的供应商表勾选后，含税运人民币、FOB、备注和附件会同步到共享任务。</p></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={onOpenExcelTool}>打开Excel工具录入报价</button><button className="btn btn-outline" onClick={load}>刷新最新数据</button></div></div>
+          <div className="card-header"><div><h2 className="card-title">产品明细</h2><p className="text-muted text-sm">多人可以同时填写同一询价表：未分配的产品由团队协作填写，已分配的产品仅由对应采购专员修改；同一行冲突时系统会保护较新的版本。</p></div><div className="collab-export-actions"><button className="btn btn-outline" onClick={onOpenExcelTool}>打开Excel工具录入报价</button><button className="btn btn-outline" onClick={load}>刷新最新数据</button></div></div>
           <div className="collab-quote-source-bar">
             <label><span>调用本机已生成的供应商表</span><select className="form-select" value={selectedQuoteSetId} onChange={event => chooseQuoteSet(event.target.value)}><option value="">请选择供应商询价记录</option>{quoteSets.map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</select></label>
             <label><span>汇率（CNY/USD）</span><input className="form-input" type="number" min="0.0001" step="0.0001" value={exchangeRate} onChange={event => setExchangeRate(event.target.value)} /></label>
@@ -379,7 +384,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
           <div className="table-container collab-shared-table-wrap"><table className="data-table collab-shared-table">
             <thead><tr><th>#</th><th>产品描述</th><th>代码</th><th className="number">数量</th><th>单位</th><th>中选供应商</th><th>含税运人民币</th><th>FOB（USD）</th><th>备注</th><th>附件</th><th>最后修改</th><th>操作</th></tr></thead>
             <tbody>{items.map((item, rowIndex) => {
-              return <tr key={item.id} className={item.dirty ? 'dirty' : ''}><td>{item.lineNo}</td><td className="collab-description-cell">{item.description}</td><td>{item.productCode || '—'}</td><td className="number">{item.quantity ?? '—'}</td><td>{item.unit || '—'}</td><td><strong>{item.selectedSupplier || '未选择'}</strong><button className="btn btn-outline btn-sm collab-pick-supplier" disabled={!selectedQuoteSet} onClick={() => setSelectingItemId(item.id)}>从表格勾选</button></td><td className="number">{item.totalRmb == null ? '—' : `¥${Number(item.totalRmb).toFixed(2)}`}</td><td><input className="form-input" type="number" min="0" step="0.01" value={item.fobUsd ?? ''} data-collab-cell={`${rowIndex}-0`} onKeyDown={event => navigateGrid(event, rowIndex, 0)} onChange={event => updateLocalItem(item.id, 'fobUsd', event.target.value)} /></td><td><input className="form-input" value={item.remarks || ''} data-collab-cell={`${rowIndex}-1`} onKeyDown={event => navigateGrid(event, rowIndex, 1)} onChange={event => updateLocalItem(item.id, 'remarks', event.target.value)} /></td><td><div className="collab-attachment-list">{(item.attachments || []).map(file => <button key={file.id} className="collab-attachment-link" onClick={() => { if (file.kind === 'image') { setPreviewImage(`/api/tasks/${encodeURIComponent(task.id)}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(file.id)}`); } else { window.electronAPI.collaboration.downloadTaskAttachment(task.id, item.id, file); } }}>{file.kind === 'image' ? '🖼' : '📎'} {file.name}</button>)}<button className="btn btn-outline btn-sm" onClick={() => attach(item)}>＋附件</button></div></td><td><span className="text-sm">{item.updatedByName || '—'}</span><span className="text-sm text-muted collab-block">{formatDate(item.updatedAt, true)}</span></td><td><button className="btn btn-primary btn-sm" disabled={!item.dirty || savingId === item.id} onClick={() => saveItem(item)}>{savingId === item.id ? '保存中…' : '保存本行'}</button><button className="btn btn-outline btn-sm" style={{marginLeft:4}} onClick={() => revertItem(item)} title="还原到上一个版本">还原</button></td></tr>;
+              return <tr key={item.id} className={item.dirty ? 'dirty' : ''}><td>{item.lineNo}</td><td className="collab-description-cell">{item.description}</td><td>{item.productCode || '—'}</td><td className="number">{item.quantity ?? '—'}</td><td>{item.unit || '—'}</td><td>{user.role === 'manager' && <select className="form-select form-select-sm" value={item.assignedUserId || ''} onChange={async event => { try { await window.electronAPI.collaboration.assignTaskItem(task.id, item.id, event.target.value || null); await load(); onChanged?.(); } catch (e) { setError(cleanError(e)); } }}><option value="">未分配</option>{(users || []).filter(entry => entry.status === 'active' && entry.role === 'purchaser').map(entry => <option key={entry.id} value={entry.id}>{entry.displayName}</option>)}</select>}<input className="form-input" value={item.selectedSupplier || ''} placeholder="手工填写供应商" onChange={event => updateLocalItem(item.id, 'selectedSupplier', event.target.value)} /><button className="btn btn-outline btn-sm collab-pick-supplier" onClick={() => setSelectingItemId(item.id)}>从表格勾选</button></td><td><input className="form-input" type="number" min="0" step="0.01" value={item.totalRmb ?? ''} data-collab-cell={rowIndex + '-0'} onKeyDown={event => navigateGrid(event, rowIndex, 0)} onChange={event => updateLocalItem(item.id, 'totalRmb', event.target.value)} placeholder="含税运总价" /></td><td><input className="form-input" type="number" min="0" step="0.01" value={item.fobUsd ?? ''} data-collab-cell={rowIndex + '-1'} onKeyDown={event => navigateGrid(event, rowIndex, 1)} onChange={event => updateLocalItem(item.id, 'fobUsd', event.target.value)} /></td><td><input className="form-input" value={item.remarks || ''} data-collab-cell={rowIndex + '-2'} onKeyDown={event => navigateGrid(event, rowIndex, 2)} onChange={event => updateLocalItem(item.id, 'remarks', event.target.value)} /></td><td><div className="collab-attachment-list">{(item.attachments || []).map(file => <button key={file.id} className="collab-attachment-link" onClick={() => { if (file.kind === 'image') { setPreviewImage(`/api/tasks/${encodeURIComponent(task.id)}/items/${encodeURIComponent(item.id)}/attachments/${encodeURIComponent(file.id)}`); } else { window.electronAPI.collaboration.downloadTaskAttachment(task.id, item.id, file); } }}>{file.kind === 'image' ? '🖼' : '📎'} {file.name}</button>)}<button className="btn btn-outline btn-sm" onClick={() => attach(item)}>＋附件</button></div></td><td><span className="text-sm">{item.updatedByName || '—'}</span><span className="text-sm text-muted collab-block">{formatDate(item.updatedAt, true)}</span></td><td><button className="btn btn-primary btn-sm" disabled={!item.dirty || savingId === item.id} onClick={() => saveItem(item)}>{savingId === item.id ? '保存中…' : '保存本行'}</button><button className="btn btn-outline btn-sm" style={{marginLeft:4}} onClick={() => revertItem(item)} title="还原到上一个版本">还原</button></td></tr>;
             })}</tbody>
           </table></div>
           {selectingItemId && (() => {
@@ -387,7 +392,7 @@ function TaskDetail({ taskId, user, onBack, onChanged, onOpenExcelTool }) {
             const ranked = sortCandidatesForTarget({ ...(target?.source || {}), description: target?.description, code: target?.productCode }, candidates);
             return <div className="collab-candidate-picker"><div className="card-header"><div><h3>为第{target?.lineNo}项勾选供应商</h3><p className="text-muted text-sm">数据来自“{selectedQuoteSet?.name}”，按型号和描述优先排序。</p></div><button className="btn btn-outline btn-sm" onClick={() => setSelectingItemId('')}>关闭</button></div><div className="table-container"><table className="data-table"><thead><tr><th>选择</th><th>供应商</th><th>型号</th><th>含税运人民币</th><th>自动FOB</th><th>备注</th></tr></thead><tbody>{ranked.map(({ candidate, score }, idx) => { const rmb = candidateRmbValue(candidate, selectedQuoteSet); const fob = rmb / (numberValue(exchangeRate) || 7.25) / (invoiceType === 'special' ? 1.13 : 1); const priceRank = rmb > 0 ? ranked.filter(c => candidateRmbValue(c.candidate, selectedQuoteSet) > 0).sort((a, b) => candidateRmbValue(a.candidate, selectedQuoteSet) - candidateRmbValue(b.candidate, selectedQuoteSet)).findIndex(c => c.candidate === candidate) + 1 : null; return <tr key={`${candidate._quoteEntryId}-${candidate._quoteItemIndex}`}><td><button className="btn btn-primary btn-sm" disabled={savingId === target?.id} onClick={() => applyCandidate(target, candidate)}>✓ 选用</button></td><td>{candidate.supplierName || '—'}{priceRank > 0 && <span className="rfq-price-rank" style={{marginLeft:6,color:priceRank===1?'#27AE60':priceRank===2?'#F39C12':'#888',fontSize:11,fontWeight:600}}>{priceRank===1?'最低':priceRank===2?'第2':'#'+priceRank}</span>}</td><td>{candidate.model || candidate.reference || '—'}</td><td>¥{rmb.toFixed(2)}</td><td>${fob.toFixed(2)}</td><td>{candidate.notes || candidate.afterSales || '—'}{score > 0 && <span className="rfq-match-score matched"> {score}分</span>}</td></tr>; })}</tbody></table></div></div>;
           })()}
-          <div className="collab-review-actions"><span>提交后仍可继续修改；正式提交会保留不可覆盖的历史快照。</span>{user.role === 'admin' ? <button className="btn btn-success btn-lg" onClick={snapshot}>审核通过并保存提交快照</button> : <button className="btn btn-success btn-lg" onClick={submitReview}>提交负责人审核</button>}</div>
+          <div className="collab-review-actions"><span>提交后仍可继续修改；总经理审核通过会保留不可覆盖的历史快照。</span>{user.role === 'admin' ? <button className="btn btn-success btn-lg" onClick={snapshot}>审核通过并保存提交快照</button> : <button className="btn btn-success btn-lg" onClick={submitReview}>提交总经理审核</button>}</div>
         </section>
       ) : (
         tab === 'history' && <section className="card"><div className="card-header"><h2 className="card-title">修改记录</h2><button className="btn btn-outline" onClick={loadAudit}>刷新</button></div>{audit.length === 0 ? <div className="empty-state"><div className="empty-state-text">暂无修改记录</div></div> : <div className="collab-audit-list">{audit.map(record => <div key={record.id}><time>{formatDate(record.createdAt, true)}</time><strong>{record.userName || '系统'}</strong><span>{record.action === 'update' ? '修改了询价数据' : '导入了询价任务'}</span></div>)}</div>}</section>
@@ -424,9 +429,12 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
     setLoading(true);
     setError('');
     try {
+      const canListUsers = ['admin', 'manager'].includes(user.role);
       const [taskResult, userResult, statResult] = await Promise.all([
         window.electronAPI.collaboration.listTasks(),
-        window.electronAPI.collaboration.listUsers(),
+        canListUsers
+          ? window.electronAPI.collaboration.listUsers()
+          : Promise.resolve({ users: [] }),
         window.electronAPI.collaboration.getTaskStats().catch(() => null)
       ]);
       setTasks(taskResult.tasks || []);
@@ -437,11 +445,11 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
   useEffect(() => { load(); }, []);
   const activeTasks = useMemo(() => tasks.filter(task => task.status !== 'completed').length, [tasks]);
 
-  if (selectedTaskId) return <TaskDetail taskId={selectedTaskId} user={user} onBack={() => { setSelectedTaskId(''); load(); }} onChanged={() => { load(); onNotificationsChanged(); }} onOpenExcelTool={onOpenExcelTool} />;
+  if (selectedTaskId) return <TaskDetail taskId={selectedTaskId} user={user} users={users} onBack={() => { setSelectedTaskId(''); load(); }} onChanged={() => { load(); onNotificationsChanged(); }} onOpenExcelTool={onOpenExcelTool} />;
   const statusCounts = { drafts: tasks.filter(t => t.status === 'draft').length, published: tasks.filter(t => t.status === 'published').length, inProgress: tasks.filter(t => t.status === 'in_progress').length, review: tasks.filter(t => t.status === 'review').length, completed: tasks.filter(t => t.status === 'completed').length };
   return (
     <div>
-      {user.role === 'admin' && <div className="collab-admin-action-bar"><div><strong>管理员工作台</strong><span>当前共有 {activeTasks} 个未完成任务</span></div><button className="btn btn-primary btn-lg" onClick={() => setShowImport(true)}>＋ 上传并下发询价单</button></div>}
+      {user.role === 'manager' && <div className="collab-admin-action-bar"><div><strong>主管工作台</strong><span>当前共有 {activeTasks} 个未完成任务</span></div><button className="btn btn-primary btn-lg" onClick={() => setShowImport(true)}>＋ 上传并下发询价单</button></div>}
       {stats && (
         <div className="collab-stats-bar">
           {statusCounts.drafts > 0 && <span>草稿 {statusCounts.drafts}</span>}
@@ -454,7 +462,7 @@ export default function CollaborationWorkspace({ user, onNotificationsChanged, o
       {message && <div className="collab-form-success">{message}</div>}
       {error && <div className="collab-form-error">{error}</div>}
       {loading ? <div className="collab-loading">正在读取共享任务…</div> : <TaskList tasks={tasks} users={users} user={user} onSelect={setSelectedTaskId} onRefresh={load} searchQuery={searchQuery} batchMode={batchMode} selectedIds={selectedIds} onToggleSelect={id => { const s = new Set(selectedIds); if (s.has(id)) s.delete(id); else s.add(id); setSelectedIds(s); }} />}
-      {user.role === 'admin' && !loading && (
+      {user.role === 'manager' && !loading && (
         <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
           <button className="btn btn-outline btn-sm" onClick={() => { setBatchMode(!batchMode); setSelectedIds(new Set()); }}>{batchMode ? '退出批量' : '批量操作'}</button>
         </div>

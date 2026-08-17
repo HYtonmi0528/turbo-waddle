@@ -22,11 +22,11 @@ export default function App() {
   const [selectedTemplateForMapping, setSelectedTemplateForMapping] = useState(null);
   const [toast, setToast] = useState(null);
   const [showSplash, setShowSplash] = useState(true);
-  const [appVersion, setAppVersion] = useState('1.1.0-beta.3');
+  const [appVersion, setAppVersion] = useState('2.1.3');
   const [updateStatus, setUpdateStatus] = useState({ state: 'idle', percent: 0 });
   const [releaseNotesModal, setReleaseNotesModal] = useState(null);
   const announcedVersionRef = useRef('');
-  const appVersionRef = useRef('1.1.0-beta.3');
+  const appVersionRef = useRef('2.1.3');
   const currentReleaseNotesRef = useRef(CURRENT_RELEASE_NOTES.items.join('\n'));
 
   const showToast = useCallback((message, type = 'success') => {

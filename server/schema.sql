@@ -6,9 +6,16 @@ CREATE TABLE IF NOT EXISTS users (
   password_salt CHAR(32) NOT NULL,
   role ENUM('admin', 'manager', 'purchaser', 'viewer') NOT NULL DEFAULT 'viewer',
   status ENUM('pending', 'active', 'disabled') NOT NULL DEFAULT 'pending',
+  requested_role VARCHAR(40),
+  registration_token_hash CHAR(64),
+  department VARCHAR(120),
+  phone VARCHAR(40),
+  language VARCHAR(10) NOT NULL DEFAULT 'zh-CN',
+  approved_by CHAR(36),
+  approved_at DATETIME(3),
   created_at DATETIME(3) NOT NULL,
   updated_at DATETIME(3) NOT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash CHAR(64) PRIMARY KEY,
@@ -18,7 +25,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   INDEX idx_sessions_user (user_id),
   INDEX idx_sessions_expiry (expires_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS user_templates (
   id CHAR(36) PRIMARY KEY,
@@ -35,7 +42,7 @@ CREATE TABLE IF NOT EXISTS user_templates (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_templates_owner FOREIGN KEY (owner_id) REFERENCES users(id),
   INDEX idx_templates_owner (owner_id, updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS rfq_tasks (
   id CHAR(36) PRIMARY KEY,
@@ -61,7 +68,68 @@ CREATE TABLE IF NOT EXISTS rfq_tasks (
   CONSTRAINT fk_tasks_creator FOREIGN KEY (created_by) REFERENCES users(id),
   INDEX idx_tasks_status_updated (status, updated_at),
   INDEX idx_tasks_created_by (created_by)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 海外端提交的询价单先进入接收箱，管理员确认后再生成 rfq_tasks。
+-- 这样可以区分“外部已提交”和“国内已下发”的业务状态。
+CREATE TABLE IF NOT EXISTS external_rfq_submissions (
+  id CHAR(36) PRIMARY KEY,
+  external_request_id VARCHAR(120),
+  title VARCHAR(255) NOT NULL,
+  requester VARCHAR(120),
+  country VARCHAR(120),
+  client_name VARCHAR(180),
+  request_date DATE,
+  deadline DATETIME(3),
+  original_name VARCHAR(255) NOT NULL,
+  storage_path VARCHAR(600) NOT NULL,
+  metadata_json JSON,
+  parsed_items_json JSON,
+  status ENUM('received', 'accepted', 'rejected') NOT NULL DEFAULT 'received',
+  received_at DATETIME(3) NOT NULL,
+  reviewed_at DATETIME(3),
+  reviewed_by CHAR(36),
+  rejection_reason TEXT,
+  task_id CHAR(36),
+  created_by CHAR(36),
+  CONSTRAINT fk_external_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_external_reviewed_by FOREIGN KEY (reviewed_by) REFERENCES users(id),
+  CONSTRAINT fk_external_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE SET NULL,
+  UNIQUE KEY uq_external_request_id (external_request_id),
+  INDEX idx_external_status_received (status, received_at),
+  INDEX idx_external_task (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 钉盘式资料中心：数据库保存元数据，文件本体保存在 storageDir，后续可替换为 OSS。
+CREATE TABLE IF NOT EXISTS documents (
+  id CHAR(36) PRIMARY KEY,
+  original_name VARCHAR(255) NOT NULL,
+  storage_path VARCHAR(600) NOT NULL,
+  mime_type VARCHAR(160),
+  file_size BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  file_ext VARCHAR(20),
+  category VARCHAR(80) NOT NULL DEFAULT 'other',
+  entity_type VARCHAR(60),
+  entity_id CHAR(36),
+  archive_category VARCHAR(80),
+  archive_date DATE,
+  archive_folder VARCHAR(255),
+  archive_name VARCHAR(255),
+  visibility ENUM('all', 'department', 'private', 'admin') NOT NULL DEFAULT 'all',
+  version_no INT NOT NULL DEFAULT 1,
+  checksum CHAR(64),
+  status ENUM('active', 'deleted') NOT NULL DEFAULT 'active',
+  created_by CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL,
+  updated_at DATETIME(3) NOT NULL,
+  deleted_at DATETIME(3),
+  CONSTRAINT fk_documents_creator FOREIGN KEY (created_by) REFERENCES users(id),
+  INDEX idx_documents_search (status, category, created_at),
+  INDEX idx_documents_entity (entity_type, entity_id, version_no),
+  INDEX idx_documents_archive (archive_category, archive_date, archive_folder),
+  INDEX idx_documents_name (original_name),
+  INDEX idx_documents_creator (created_by, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS rfq_items (
   id CHAR(36) PRIMARY KEY,
@@ -72,6 +140,7 @@ CREATE TABLE IF NOT EXISTS rfq_items (
   unit VARCHAR(80),
   product_code VARCHAR(120),
   ltc VARCHAR(120),
+  assigned_user_id CHAR(36),
   fob_usd DECIMAL(18,4),
   total_usd DECIMAL(18,4),
   total_rmb DECIMAL(18,4),
@@ -88,9 +157,10 @@ CREATE TABLE IF NOT EXISTS rfq_items (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_items_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE CASCADE,
   CONSTRAINT fk_items_editor FOREIGN KEY (updated_by) REFERENCES users(id),
+  CONSTRAINT fk_items_assignee FOREIGN KEY (assigned_user_id) REFERENCES users(id) ON DELETE SET NULL,
   UNIQUE KEY uq_task_line (task_id, line_no),
   INDEX idx_items_task (task_id, line_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS task_snapshots (
   id CHAR(36) PRIMARY KEY,
@@ -102,7 +172,7 @@ CREATE TABLE IF NOT EXISTS task_snapshots (
   CONSTRAINT fk_snapshots_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE CASCADE,
   CONSTRAINT fk_snapshots_creator FOREIGN KEY (created_by) REFERENCES users(id),
   UNIQUE KEY uq_task_snapshot_version (task_id, version_no)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
   id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -116,7 +186,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(id),
   INDEX idx_audit_entity (entity_type, entity_id, created_at),
   INDEX idx_audit_user (user_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS notifications (
   id CHAR(36) PRIMARY KEY,
@@ -131,7 +201,7 @@ CREATE TABLE IF NOT EXISTS notifications (
   CONSTRAINT fk_notifications_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_notifications_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE CASCADE,
   INDEX idx_notifications_unread (user_id, is_read, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS data_entries (
   id CHAR(36) PRIMARY KEY,
@@ -142,7 +212,7 @@ CREATE TABLE IF NOT EXISTS data_entries (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_entries_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   INDEX idx_entries_user_type (user_id, type, updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS generation_history (
   id CHAR(36) PRIMARY KEY,
@@ -154,7 +224,7 @@ CREATE TABLE IF NOT EXISTS generation_history (
   created_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_history_user FOREIGN KEY (user_id) REFERENCES users(id),
   INDEX idx_history_user_date (user_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS custom_system_fields (
   field_key VARCHAR(80) PRIMARY KEY,
@@ -164,7 +234,7 @@ CREATE TABLE IF NOT EXISTS custom_system_fields (
   created_by CHAR(36),
   created_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_fields_creator FOREIGN KEY (created_by) REFERENCES users(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS data_entry_drafts (
   id VARCHAR(120) PRIMARY KEY,
@@ -175,7 +245,7 @@ CREATE TABLE IF NOT EXISTS data_entry_drafts (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_drafts_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   INDEX idx_drafts_user (user_id, template_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS app_settings (
   user_id CHAR(36) NOT NULL,
@@ -184,7 +254,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_at DATETIME(3) NOT NULL,
   PRIMARY KEY (user_id, setting_key),
   CONSTRAINT fk_settings_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS quote_sets (
   id CHAR(36) PRIMARY KEY,
@@ -197,7 +267,7 @@ CREATE TABLE IF NOT EXISTS quote_sets (
   updated_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_quotes_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   INDEX idx_quotes_user (user_id, updated_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS quote_items (
   id CHAR(36) PRIMARY KEY,
@@ -216,7 +286,7 @@ CREATE TABLE IF NOT EXISTS quote_items (
   created_at DATETIME(3) NOT NULL,
   CONSTRAINT fk_qitems_set FOREIGN KEY (quote_set_id) REFERENCES quote_sets(id) ON DELETE CASCADE,
   INDEX idx_qitems_set (quote_set_id, item_index)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS task_comments (
   id CHAR(36) PRIMARY KEY,
@@ -227,4 +297,4 @@ CREATE TABLE IF NOT EXISTS task_comments (
   CONSTRAINT fk_comments_task FOREIGN KEY (task_id) REFERENCES rfq_tasks(id) ON DELETE CASCADE,
   CONSTRAINT fk_comments_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   INDEX idx_comments_task (task_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

@@ -113,6 +113,9 @@ function registerIpcHandlers() {
   ipcMain.handle('collaboration:register', async (event, payload) => {
     return collaborationClient.register(payload);
   });
+  ipcMain.handle('collaboration:registerRole', async (event, payload) => {
+    return collaborationClient.registerRole(payload);
+  });
   ipcMain.handle('collaboration:login', async (event, payload) => {
     return collaborationClient.login(payload);
   });
@@ -153,12 +156,48 @@ function registerIpcHandlers() {
     if (result.canceled || result.filePaths.length === 0) return { canceled: true };
     return collaborationClient.importTask(result.filePaths[0], metadata);
   });
+  ipcMain.handle('collaboration:listExternalSubmissions', async () => collaborationClient.listExternalSubmissions());
+  ipcMain.handle('collaboration:submitExternalRfq', async (event, payload = {}) => {
+    if (!payload.file?.path) throw new Error('请选择询价表文件');
+    return collaborationClient.uploadExternalRfq(payload.file.path, { title: payload.title });
+  });
+  ipcMain.handle('collaboration:acceptExternalSubmission', async (event, id, payload = {}) =>
+    collaborationClient.acceptExternalSubmission(id, payload));
+  ipcMain.handle('collaboration:rejectExternalSubmission', async (event, id, reason = '') =>
+    collaborationClient.rejectExternalSubmission(id, reason));
+  ipcMain.handle('collaboration:listDocuments', async (event, params = {}) =>
+    collaborationClient.listDocuments(params));
+  ipcMain.handle('collaboration:uploadDocument', async (event, metadata = {}) => {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要归档到资料中心的文件',
+      filters: [{ name: '常用资料', extensions: ['pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt', 'zip', 'png', 'jpg', 'jpeg', 'gif', 'webp'] }],
+      properties: ['openFile']
+    });
+    if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+    return collaborationClient.uploadDocument(result.filePaths[0], metadata);
+  });
+  ipcMain.handle('collaboration:downloadDocument', async (event, document) => {
+    const result = await dialog.showSaveDialog(mainWindow, { title: '保存资料', defaultPath: document.originalName || '资料' });
+    if (result.canceled || !result.filePath) return { canceled: true };
+    return collaborationClient.downloadFile(`/api/documents/${encodeURIComponent(document.id)}/download`, result.filePath);
+  });
+  ipcMain.handle('collaboration:previewDocument', async (event, document) => {
+    const result = await collaborationClient.previewDocument(document);
+    if (result.filePath) await shell.openPath(result.filePath);
+    return result;
+  });
+  ipcMain.handle('collaboration:renameDocument', async (event, id, payload = {}) => collaborationClient.renameDocument(id, payload));
+  ipcMain.handle('collaboration:listDocumentFolders', async () => collaborationClient.listDocumentFolders());
+  ipcMain.handle('collaboration:renameDocumentFolder', async (event, payload = {}) => collaborationClient.renameDocumentFolder(payload));
+  ipcMain.handle('collaboration:deleteDocument', async (event, id) => collaborationClient.deleteDocument(id));
   ipcMain.handle('collaboration:updateTaskItem', async (event, taskId, itemId, payload) => {
     return collaborationClient.request(
       `/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}`,
       { method: 'PATCH', body: payload }
     );
   });
+  ipcMain.handle('collaboration:assignTaskItem', async (event, taskId, itemId, assignedUserId) =>
+    collaborationClient.request(`/api/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/assignee`, { method: 'PATCH', body: { assignedUserId } }));
   ipcMain.handle('collaboration:uploadTaskAttachment', async (event, taskId, itemId) => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '选择要上传到该产品的附件',

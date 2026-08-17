@@ -1,6 +1,6 @@
 {
   "name": "latic-rfq-collaboration-test",
-  "version": "2.1.0",
+  "version": "2.1.4",
   "description": "LATIC询价协作系统局域网内测版",
   "author": "LATIC",
   "repository": {
@@ -13,14 +13,15 @@
     "server": "node server/index.js",
     "server:init": "node server/scripts/initialize.js",
     "test:collaboration": "node --test tests/collaboration.test.js",
-    "build:renderer": "webpack --config webpack.renderer.config.js --mode production && node -e \"var fs=require('fs');var v=require('./package.json').version;var h=fs.readFileSync('dist/renderer/index.html','utf8');h=h.replace('</body>','<script src=\"/api.js?v='+v+'\"></'+'script></body>');fs.writeFileSync('dist/renderer/index.html',h);fs.copyFileSync('src/renderer/api-standalone.js','dist/renderer/api.js')\"",
+    "build:renderer": "webpack --config webpack.renderer.config.js --mode production && node scripts/build-web-assets.js",
     "dev:renderer": "webpack --config webpack.renderer.config.js --mode development --watch",
     "dev": "concurrently \"npm run dev:renderer\" \"wait-on dist/renderer/index.html && electron .\"",
     "build:win": "npm run build:renderer && electron-builder --win",
     "build:win:portable": "npm run build:renderer && electron-builder --win portable",
     "pm2:start": "pm2 start server/index.js --name latic-rfq --max-memory-restart 500M",
     "pm2:stop": "pm2 stop latic-rfq",
-    "pm2:restart": "pm2 restart latic-rfq"
+    "pm2:restart": "pm2 restart latic-rfq",
+    "update:server": "bash scripts/update-server.sh"
   },
   "build": {
     "appId": "com.latic.rfq-collaboration.test",
@@ -98,7 +99,7 @@
     "babel-loader": "^9.1.3",
     "concurrently": "^8.2.2",
     "css-loader": "^6.8.1",
-    "electron": "^28.0.0",
+    "electron": "^28.3.3",
     "electron-builder": "^24.9.1",
     "html-webpack-plugin": "^5.5.4",
     "style-loader": "^3.3.3",

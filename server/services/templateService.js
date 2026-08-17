@@ -3,6 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const { getPool } = require('../lib/db');
 const { loadConfig } = require('../lib/config');
+const {
+  DEFAULT_TEMPLATE_FIELDS,
+  inferSystemFieldKey,
+  normalizeFieldName,
+  normalizePersistedMapping
+} = require('../../src/shared/templateMappings');
 
 function numberValue(val) {
   const n = Number(String(val || '').replace(/[¥￥$,\s]/g, ''));
@@ -16,6 +22,48 @@ function getTemplatesDir() {
   return dir;
 }
 
+function buildGeneratedTemplateStructure(fields) {
+  const normalizedFields = [...new Set((Array.isArray(fields) && fields.length ? fields : DEFAULT_TEMPLATE_FIELDS)
+    .map(field => String(field || '').replace(/\{\{|\}\}/g, '').trim())
+    .filter(Boolean))];
+  const columns = normalizedFields.map((field, index) => ({
+    index: index + 1,
+    colNumber: index + 1,
+    sourceColNumber: index + 1,
+    header: field,
+    name: field,
+    field,
+    type: 'text',
+    width: 120
+  }));
+  return {
+    structure: { headerRow: 1, columns, sheetName: 'Sheet1' },
+    fields: normalizedFields,
+    mappings: normalizedFields.map(field => ({
+      templateField: field,
+      systemField: inferSystemFieldKey(field, [], { allowUnknown: true })
+    }))
+  };
+}
+
+async function createGeneratedTemplateFile(templateId, fields) {
+  const { structure, fields: normalizedFields, mappings } = buildGeneratedTemplateStructure(fields);
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet(structure.sheetName);
+  normalizedFields.forEach((field, index) => {
+    const cell = sheet.getCell(1, index + 1);
+    cell.value = `{{${field}}}`;
+    cell.font = { name: '微软雅黑', size: 11, bold: true, color: { argb: 'FFFFFFFF' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4472C4' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    sheet.getColumn(index + 1).width = Math.max(12, Math.min(32, field.length + 6));
+  });
+  sheet.getRow(1).height = 24;
+  const storagePath = path.join(getTemplatesDir(), `${templateId}.xlsx`);
+  await workbook.xlsx.writeFile(storagePath);
+  return { storagePath, structure, mappings };
+}
+
 async function listTemplates(userId) {
   const [rows] = await getPool().execute(
     `SELECT id, name, type, description, original_name AS originalName,
@@ -24,7 +72,13 @@ async function listTemplates(userId) {
      FROM user_templates WHERE owner_id = ? OR is_shared = 1 ORDER BY updated_at DESC`,
     [userId]
   );
-  return rows.map(row => ({ ...row, structure: parseJson(row.structure), mappings: parseJson(row.mappings) }));
+  return rows.map(row => ({
+    ...row,
+    name: decodeUploadedName(row.name) || '未命名模板',
+    originalName: decodeUploadedName(row.originalName),
+    structure: parseJson(row.structure),
+    mappings: parseJson(row.mappings)
+  }));
 }
 
 async function deleteTemplate(userId, templateId) {
@@ -41,6 +95,18 @@ function parseJson(val) {
   if (val == null) return null;
   if (typeof val === 'object') return val;
   try { return JSON.parse(val); } catch (_) { return null; }
+}
+
+function decodeUploadedName(value) {
+  if (value == null) return value;
+  const text = String(value).replace(/^\uFEFF/, '').trim();
+  if (/[ÃÂèéêëåæç鍏妯璇�]/.test(text)) {
+    try {
+      const repaired = Buffer.from(text, 'latin1').toString('utf8');
+      if (repaired && !repaired.includes('�')) return repaired;
+    } catch (_) {}
+  }
+  return text;
 }
 
 async function generateExcel(templateId, batches, options = {}) {
@@ -106,9 +172,14 @@ function detectHeaderRow(sheet) {
 function buildColumnMap(sheet, headerRow, mappings, structure) {
   const map = [];
   const fields = getFieldNames(sheet, headerRow);
+  const normalizedMappings = (mappings || [])
+    .map(mapping => normalizePersistedMapping(mapping))
+    .filter(mapping => mapping.templateField && mapping.systemField);
   fields.forEach((fieldName, idx) => {
     const colIndex = idx + 1;
-    const mapping = mappings.find(m => m.templateField === fieldName);
+    const mapping = normalizedMappings.find(m =>
+      normalizeFieldName(m.templateField) === normalizeFieldName(fieldName)
+    );
     if (mapping) {
       map.push({ colIndex, field: mapping.systemField, isNumber: false });
     }
@@ -125,7 +196,9 @@ function getFieldNames(sheet, headerRow) {
   const fields = [];
   const row = sheet.getRow(headerRow);
   row.eachCell({ includeEmpty: true }, (cell, colNum) => {
-    fields[colNum - 1] = String(cell.value || '').trim();
+    let value = cell.value;
+    if (value && typeof value === 'object' && Array.isArray(value.richText)) value = value.richText.map(part => part.text || '').join('');
+    fields[colNum - 1] = String(value || '').replace(/^\uFEFF/, '').replace(/\{\{|\}\}/g, '').trim();
   });
   return fields;
 }
@@ -140,6 +213,9 @@ async function parseTemplateStructure(filePath) {
   const fields = getFieldNames(sheet, headerRow);
   const columns = fields.map((name, idx) => ({
     index: idx + 1,
+    colNumber: idx + 1,
+    sourceColNumber: idx + 1,
+    header: name || `列${idx + 1}`,
     name: name || `列${idx + 1}`,
     field: name || `col_${idx + 1}`,
     type: 'text',
@@ -150,4 +226,13 @@ async function parseTemplateStructure(filePath) {
   return { structure, fields };
 }
 
-module.exports = { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure };
+module.exports = {
+  listTemplates,
+  deleteTemplate,
+  generateExcel,
+  getTemplatesDir,
+  parseTemplateStructure,
+  decodeUploadedName,
+  buildGeneratedTemplateStructure,
+  createGeneratedTemplateFile
+};

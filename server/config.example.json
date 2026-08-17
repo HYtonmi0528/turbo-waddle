@@ -11,5 +11,6 @@
     "database": "latic_rfq"
   },
   "storageDir": "./server-data/files",
-  "sessionSecret": "替换为32位以上随机字符串"
+  "sessionSecret": "替换为32位以上随机字符串",
+  "externalApiKey": "给海外端使用的随机长密钥"
 }

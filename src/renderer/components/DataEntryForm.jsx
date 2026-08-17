@@ -4,6 +4,11 @@ import {
   parseClipboardGrid,
   applyGridPaste
 } from '../utils/gridNavigation';
+import {
+  DEFAULT_TEMPLATE_FIELDS,
+  inferSystemFieldKey,
+  normalizePersistedMapping
+} from '../../shared/templateMappings';
 
 const NUMERIC_FIELDS = new Set([
   'price', 'cost', 'profit', 'profitRate', 'totalPrice', 'quantity',
@@ -54,6 +59,7 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
   const [isGenerating, setIsGenerating] = useState(false);
   // 存储位置
   const [saveFolder, setSaveFolder] = useState('');
+  const [isWebMode, setIsWebMode] = useState(false);
   const [fileName, setFileName] = useState('');
   const [showNewFolderInput, setShowNewFolderInput] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
@@ -81,26 +87,49 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
     setIsLoadingFields(true);
     (async () => {
       try {
-        const [structure, mappings, systemFields] = await Promise.all([
+        const [remoteStructure, remoteMappings, systemFields] = await Promise.all([
           window.electronAPI.templates.getStructure(selectedTemplate.id),
           window.electronAPI.fieldMapping.get(selectedTemplate.id),
           window.electronAPI.fieldMapping.getSystemFields()
         ]);
         if (canceled) return;
-        const mappingList = mappings || [];
-        const fields = (structure?.columns || []).map((column, index) => {
+        // 老模板可能没有单独的 structure/mappings 接口数据，但模板列表已携带快照。
+        // 兼容两种来源，避免“模板已选中但录入区为空”。
+        const structure = Array.isArray(remoteStructure?.columns)
+          ? remoteStructure
+          : (Array.isArray(selectedTemplate.structure?.columns) ? selectedTemplate.structure : {});
+        const persistedMappings = Array.isArray(remoteMappings) && remoteMappings.length > 0
+          ? remoteMappings
+          : (Array.isArray(selectedTemplate.mappings) ? selectedTemplate.mappings : []);
+        const mappingList = persistedMappings
+          .map(mapping => normalizePersistedMapping(mapping, systemFields || []))
+          .filter(mapping => mapping.templateField && mapping.systemField);
+        const structureColumns = Array.isArray(structure?.columns) ? structure.columns : [];
+        const columns = structureColumns.length > 0
+          ? structureColumns
+          : mappingList.length > 0 ? mappingList.map((mapping, index) => ({
+            header: mapping.templateField,
+            colNumber: index + 1,
+            width: 12
+          })) : DEFAULT_TEMPLATE_FIELDS.map((header, index) => ({
+            header,
+            colNumber: index + 1,
+            width: 12
+          }));
+        const fields = columns.map((column, index) => {
           const templateLabel = cleanTemplateField(column.header);
           const normalizedLabel = normalizeTemplateField(templateLabel);
           const mapping = mappingList.find(item =>
-            cleanTemplateField(item.template_field) === templateLabel ||
-            normalizeTemplateField(item.template_field) === normalizedLabel
+            cleanTemplateField(item.templateField) === templateLabel ||
+            normalizeTemplateField(item.templateField) === normalizedLabel
           );
           const calculatedUsdCost = isUsdCostTemplateField(templateLabel);
           const landedPrice = isLandedPriceTemplateField(templateLabel);
-          if (!mapping?.system_field && !calculatedUsdCost && !landedPrice) return null;
+          const inferredSystemField = inferSystemFieldKey(templateLabel, systemFields || [], { allowUnknown: false });
+          if (!mapping?.systemField && !inferredSystemField && !calculatedUsdCost && !landedPrice) return null;
           const systemField = calculatedUsdCost
             ? 'usdCost'
-            : landedPrice ? 'price' : mapping.system_field;
+            : landedPrice ? 'price' : (mapping?.systemField || inferredSystemField);
           const systemFieldDefinition = (systemFields || []).find(field => field.key === systemField);
           const attachmentType = inferAttachmentType(templateLabel, systemFieldDefinition?.dataType);
           const width = Math.min(Math.max((Number(column.width) || 12) * 8, 70), 220);
@@ -240,6 +269,7 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
     })();
     const dateStr = new Date().toISOString().slice(0, 10);
     setFileName(`生成表格_${dateStr}.xlsx`);
+    window.electronAPI?.app?.getVersion?.().then(version => setIsWebMode(version === 'web')).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -259,7 +289,9 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
           fetchedAt: result.fetchedAt,
           source: result.source
         });
-        if (notify) showToast(`今日汇率已更新：1 USD = ${Number(result.rate).toFixed(4)} CNY`);
+        if (notify) showToast(result.stale
+          ? '今日汇率服务暂时不可用，已保留当前汇率'
+          : `今日汇率已更新：1 USD = ${Number(result.rate).toFixed(4)} CNY`, result.stale ? 'warning' : 'success');
       } else if (notify) {
         showToast((result.message || '今日汇率获取失败') + '，已保留手动汇率', 'warning');
       }
@@ -272,6 +304,10 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
 
   // ---------- 文件夹操作 ----------
   const handleSelectFolder = async () => {
+    if (isWebMode) {
+      showToast('网页端由服务器自动归档，生成后会自动下载文件', 'warning');
+      return;
+    }
     try {
       const folder = await window.electronAPI.dialog.selectFolder();
       if (folder) setSaveFolder(folder);
@@ -479,7 +515,7 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
   // ---------- 生成 ----------
   const handleGenerate = async () => {
     if (!selectedTemplate) { showToast('请先选择一个模板', 'warning'); return; }
-    if (!saveFolder) { showToast('请选择保存文件夹', 'warning'); return; }
+    if (!isWebMode && !saveFolder) { showToast('请选择保存文件夹', 'warning'); return; }
 
     // 如果有未添加到批次的当前数据，自动添加
     let allBatches = [...batches];
@@ -501,13 +537,14 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
     }
 
     const finalFileName = fileName.trim() || `生成表格_${new Date().toISOString().slice(0, 10)}.xlsx`;
-    const savePath = `${saveFolder}\\${finalFileName}`;
+    const savePath = saveFolder ? `${saveFolder}\\${finalFileName}` : '';
 
     setIsGenerating(true);
     try {
       const result = await window.electronAPI.excel.generate({
         templateId: selectedTemplate.id,
         batches: allBatches,
+        fileName: finalFileName,
         savePath: savePath,
         options: {
           autoQuoteNumber: true,
@@ -517,14 +554,14 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
       });
 
       if (result.success) {
-        showToast(`文件已保存到: ${result.filePath}`);
+        showToast(isWebMode ? '文件已生成并开始下载，服务器同时已自动归档' : `文件已保存到: ${result.filePath}`);
 
         const flatItems = allBatches.flatMap(b => b.items);
         await window.electronAPI.history.add({
           templateId: selectedTemplate.id,
           templateName: selectedTemplate.name,
           dataSummary: allBatches.map(b => `${b.category}(${b.items.length}项)`).join(' | '),
-          filePath: result.filePath
+          filePath: result.filePath || finalFileName
         });
 
         // 同时保存为“供应商询价记录”，供内测版的客户询价单回填页面选择。
@@ -538,7 +575,7 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
             exchangeRate: parseFloat(exchangeRate) || 7.25,
             invoiceType
           },
-          generatedFile: result.filePath
+          generatedFile: result.filePath || finalFileName
         });
 
         for (const item of flatItems) {
@@ -951,11 +988,10 @@ export default function DataEntryForm({ templates, selectedTemplate, onTemplateS
         </div>
         <div className="form-row" style={{ alignItems: 'flex-end' }}>
           <div className="form-group" style={{ flex: 3 }}>
-            <label className="form-label">保存文件夹</label>
+            <label className="form-label">{isWebMode ? '服务器归档位置' : '保存文件夹'}</label>
             <div style={{ display: 'flex', gap: '8px' }}>
-              <input className="form-input" value={saveFolder} onChange={e => setSaveFolder(e.target.value)} placeholder="选择或输入保存路径..." style={{ flex: 1 }} />
-              <button className="btn btn-outline" onClick={handleSelectFolder}>浏览</button>
-              <button className="btn btn-outline" onClick={() => setShowNewFolderInput(!showNewFolderInput)}>+ 新建</button>
+              <input className="form-input" value={isWebMode ? '服务器自动按资料类型和日期归档' : saveFolder} onChange={e => !isWebMode && setSaveFolder(e.target.value)} placeholder="选择或输入保存路径..." style={{ flex: 1 }} readOnly={isWebMode} />
+              {!isWebMode && <><button className="btn btn-outline" onClick={handleSelectFolder}>浏览</button><button className="btn btn-outline" onClick={() => setShowNewFolderInput(!showNewFolderInput)}>+ 新建</button></>}
             </div>
           </div>
           <div className="form-group" style={{ flex: 1 }}>

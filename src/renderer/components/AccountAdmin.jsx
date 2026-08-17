@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 
-const ROLE_LABELS = { admin: '管理员', manager: '经理', purchaser: '采购员', viewer: '查看者' };
+const ROLE_LABELS = { admin: '总经理', manager: '主管/经理', purchaser: '采购专员', viewer: '海外业务员' };
 const ROLE_LIST = ['viewer', 'purchaser', 'manager', 'admin'];
 
 export default function AccountAdmin() {

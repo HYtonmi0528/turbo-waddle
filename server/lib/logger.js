@@ -8,7 +8,8 @@ try {
   const { loadConfig } = require('./config');
   logDir = path.join(loadConfig().storageDir, 'logs');
 } catch (_) {
-  logDir = path.join(__dirname, '..', '..', 'server-data', 'logs');
+  const writableRoot = process.env.APPDATA || process.env.LOCALAPPDATA || process.env.ProgramData || process.cwd();
+  logDir = path.join(writableRoot, 'LATIC-RFQ-Collaboration', 'server-data', 'logs');
 }
 
 fs.mkdirSync(logDir, { recursive: true });

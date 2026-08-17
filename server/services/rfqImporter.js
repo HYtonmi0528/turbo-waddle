@@ -65,6 +65,28 @@ function findHeader(sheet) {
   return best;
 }
 
+function findHeaders(sheet) {
+  const headers = [];
+  const maxRows = Math.max(1, sheet.rowCount);
+  for (let rowNo = 1; rowNo <= maxRows; rowNo += 1) {
+    const row = sheet.getRow(rowNo);
+    const mapping = {};
+    row.eachCell({ includeEmpty: false }, (cell, colNo) => {
+      const header = normalize(cellValue(cell));
+      for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
+        if (!mapping[field] && aliases.some(alias => matchesAlias(header, alias))) mapping[field] = colNo;
+      }
+    });
+    const score = Object.keys(mapping).length;
+    if (score >= 3 && mapping.description) {
+      const previous = headers[headers.length - 1];
+      // 同一表头被合并单元格或空行重复时只保留一次。
+      if (!previous || rowNo - previous.rowNo > 1) headers.push({ rowNo, mapping, score });
+    }
+  }
+  return headers;
+}
+
 function findAdjacentValue(sheet, aliases, maxRow) {
   for (let rowNo = 1; rowNo <= maxRow; rowNo += 1) {
     const row = sheet.getRow(rowNo);
@@ -107,57 +129,75 @@ function excelDate(value) {
 async function importRfqWorkbook(filePath) {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);
-  let selected;
+  const sections = [];
   for (const sheet of workbook.worksheets) {
-    try {
-      const header = findHeader(sheet);
-      if (!selected || header.score > selected.header.score) selected = { sheet, header };
-    } catch (_) {}
+    for (const header of findHeaders(sheet)) sections.push({ sheet, header });
   }
-  if (!selected) throw new Error('工作簿中没有可识别的询价明细表');
+  if (!sections.length) throw new Error('工作簿中没有可识别的询价明细表');
 
-  const { sheet, header } = selected;
   const items = [];
-  const metadata = extractMetadataAboveHeader(sheet, header.rowNo);
-  let consecutiveEmptyRows = 0;
-  for (let rowNo = header.rowNo + 1; rowNo <= sheet.rowCount; rowNo += 1) {
-    const row = sheet.getRow(rowNo);
-    const get = field => header.mapping[field] ? cellValue(row.getCell(header.mapping[field])) : null;
-    const description = String(get('description') || '').trim();
-    const quantityRaw = get('quantity');
-    const quantity = quantityRaw === null || quantityRaw === undefined || String(quantityRaw).trim() === ''
-      ? null
-      : Number(quantityRaw);
-    if (!description && !Number.isFinite(quantity)) {
-      consecutiveEmptyRows += 1;
-      if (consecutiveEmptyRows >= 8 && items.length > 0) break;
-      continue;
-    }
-    consecutiveEmptyRows = 0;
-    if (!metadata.requester) metadata.requester = get('requester');
-    if (!metadata.country) metadata.country = get('country');
-    if (!metadata.requestDate) metadata.requestDate = excelDate(get('requestDate'));
-    if (!metadata.importType) metadata.importType = get('importType');
-    if (!metadata.deliveryType) metadata.deliveryType = get('deliveryType');
-    if (!metadata.client) metadata.client = get('client');
-    if (!metadata.paymentType) metadata.paymentType = get('paymentType');
-    items.push({
-      lineNo: items.length + 1,
-      sourceRow: rowNo,
-      description,
-      quantity: Number.isFinite(quantity) ? quantity : null,
-      unit: get('unit'),
-      code: get('code'),
-      ltc: get('ltc'),
-      observation: get('observation'),
-      source: {
-        deliveryDate: excelDate(get('deliveryDate')),
-        personalized: get('personalized')
+  const metadata = {};
+  const tables = [];
+  for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex += 1) {
+    const { sheet, header } = sections[sectionIndex];
+    const next = sections.slice(sectionIndex + 1).find(candidate => candidate.sheet.name === sheet.name);
+    const endRow = next ? next.header.rowNo - 1 : sheet.rowCount;
+    const sectionMetadata = extractMetadataAboveHeader(sheet, header.rowNo);
+    for (const [key, value] of Object.entries(sectionMetadata)) if (!metadata[key] && value) metadata[key] = value;
+    const sectionItems = [];
+    let consecutiveEmptyRows = 0;
+    for (let rowNo = header.rowNo + 1; rowNo <= endRow; rowNo += 1) {
+      const row = sheet.getRow(rowNo);
+      const get = field => header.mapping[field] ? cellValue(row.getCell(header.mapping[field])) : null;
+      const description = String(get('description') || '').trim();
+      const quantityRaw = get('quantity');
+      const quantity = quantityRaw === null || quantityRaw === undefined || String(quantityRaw).trim() === ''
+        ? null
+        : Number(quantityRaw);
+      if (!description && !Number.isFinite(quantity)) {
+        consecutiveEmptyRows += 1;
+        if (consecutiveEmptyRows >= 8 && sectionItems.length > 0) break;
+        continue;
       }
-    });
+      consecutiveEmptyRows = 0;
+      const item = {
+        lineNo: items.length + sectionItems.length + 1,
+        sourceRow: rowNo,
+        sourceSheetName: sheet.name,
+        sourceHeaderRow: header.rowNo,
+        description,
+        quantity: Number.isFinite(quantity) ? quantity : null,
+        unit: get('unit'),
+        code: get('code'),
+        ltc: get('ltc'),
+        observation: get('observation'),
+        source: {
+          deliveryDate: excelDate(get('deliveryDate')),
+          personalized: get('personalized'),
+          sourceSheetName: sheet.name,
+          sourceHeaderRow: header.rowNo
+        }
+      };
+      sectionItems.push(item);
+      for (const [key, value] of Object.entries({
+        requester: get('requester'), country: get('country'), requestDate: excelDate(get('requestDate')),
+        importType: get('importType'), deliveryType: get('deliveryType'), client: get('client'), paymentType: get('paymentType')
+      })) if (!metadata[key] && value) metadata[key] = value;
+    }
+    if (sectionItems.length) {
+      items.push(...sectionItems);
+      tables.push({ sheetName: sheet.name, headerRow: header.rowNo, itemCount: sectionItems.length });
+    }
   }
   if (!items.length) throw new Error('已识别表头，但没有找到产品明细');
-  return { sheetName: sheet.name, headerRow: header.rowNo, metadata, items };
+  return {
+    sheetName: tables[0].sheetName,
+    headerRow: tables[0].headerRow,
+    tableCount: tables.length,
+    tables,
+    metadata,
+    items
+  };
 }
 
 module.exports = { importRfqWorkbook, FIELD_ALIASES };

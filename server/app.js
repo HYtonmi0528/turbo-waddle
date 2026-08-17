@@ -15,18 +15,100 @@ const {
 } = require('./lib/passwords');
 const { importRfqWorkbook } = require('./services/rfqImporter');
 const { exportCompletedRfq } = require('./services/rfqExporter');
-const { listTemplates, deleteTemplate, generateExcel, getTemplatesDir, parseTemplateStructure } = require('./services/templateService');
+const {
+  listTemplates,
+  deleteTemplate,
+  generateExcel,
+  getTemplatesDir,
+  parseTemplateStructure,
+  decodeUploadedName,
+  createGeneratedTemplateFile
+} = require('./services/templateService');
 const { getToday } = require('./services/exchangeRateService');
 const { logger } = require('./lib/logger');
+const packageVersion = require('../package.json').version;
+const { inferSystemFieldKey } = require('../src/shared/templateMappings');
 
 const uuid = () => crypto.randomUUID();
 const now = () => new Date();
 const json = value => value == null ? null : JSON.stringify(value);
+const getCookie = (req, name) => {
+  const raw = String(req.headers.cookie || '');
+  const match = raw.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : '';
+};
 const parseJson = (value, fallback) => {
   if (value == null) return fallback;
   if (typeof value === 'object') return value;
   try { return JSON.parse(value); } catch (_) { return fallback; }
 };
+
+const normalizeRole = value => {
+  const aliases = { general_manager: 'admin', supervisor: 'manager', overseas_sales: 'viewer', overseas: 'viewer', viewer: 'viewer', manager: 'manager', purchaser: 'purchaser', admin: 'admin' };
+  return aliases[String(value || '').trim().toLowerCase()] || 'viewer';
+};
+
+// Built-in fields are always available to mapping, even before a user adds custom fields.
+const BUILTIN_SYSTEM_FIELDS = [
+  ['supplierName', '供应商名称', '供应商信息', 'text'], ['productName', '产品名称', '产品信息', 'text'],
+  ['model', '型号/规格', '产品信息', 'text'], ['price', '价格/单价', '价格信息', 'number'],
+  ['cost', '成本', '价格信息', 'number'], ['profit', '利润', '价格信息', 'number'], ['profitRate', '利润率', '价格信息', 'number'],
+  ['totalPrice', '总价', '价格信息', 'number'], ['usdPrice', '美元单价', '价格信息', 'number'], ['usdTotalPrice', '美元总价', '价格信息', 'number'], ['usdCost', '美元成本', '价格信息', 'number'],
+  ['quantity', '数量', '交易信息', 'number'], ['deliveryTime', '交货期', '交易信息', 'text'],
+  ['paymentTerms', '付款方式', '交易信息', 'text'], ['afterSales', '售后政策', '售后信息', 'text'], ['warranty', '保修期', '售后信息', 'text'],
+  ['quoteNumber', '报价编号', '编号信息', 'text'], ['date', '日期', '编号信息', 'text'], ['contactPerson', '联系人', '联系信息', 'text'],
+  ['contactPhone', '联系电话', '联系信息', 'text'], ['companyAddress', '公司地址', '联系信息', 'text'], ['attachment', '附件/PDF文件', '附件资料', 'file'],
+  ['image', '图片/照片', '附件资料', 'image'], ['notes', '备注', '其他', 'text']
+].map(([key, label, category, dataType]) => ({ key, label, category, dataType, isBuiltin: true }));
+
+// 资料归档使用安全、可重复的目录规则：类型 / 日期 / 业务文件夹 / 文件。
+// 目录只在实际上传或生成文件时创建，不预先创建空目录。
+const localDate = value => {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+  const pad = number => String(number).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+const safeArchivePart = value => String(value || 'unnamed')
+  .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim().slice(0, 220) || 'unnamed';
+const archiveFolderName = (date, title) => `${String(date || localDate()).replace(/-/g, '').slice(4, 8)}-${safeArchivePart(title)}`;
+const archiveCategoryLabel = value => {
+  const raw = String(value || '').trim();
+  const aliases = { rfq: '询价表', quote: '报价/对比表', supplier: '供应商储备', product: '产品代码表', attachment: '任务附件', template: '模板', other: '其他资料' };
+  return aliases[raw.toLowerCase()] || raw || '其他资料';
+};
+const inferArchiveCategory = (fileName, requested) => {
+  if (String(requested || '').trim()) return archiveCategoryLabel(requested);
+  const name = String(fileName || '').toLowerCase();
+  if (/rfq|solicitud|precio|inquiry|询价/.test(name)) return '询价表';
+  if (/supplier|vendor|供应商/.test(name)) return '供应商储备';
+  if (/product.?code|sku|产品代码|代码表/.test(name)) return '产品代码表';
+  if (/template|模板/.test(name)) return '模板';
+  return '其他资料';
+};
+const archiveStoragePath = (root, category, date, folder, name) => path.join(
+  root, 'documents', 'archive', safeArchivePart(category), String(date).replace(/-/g, ''),
+  safeArchivePart(folder), safeArchivePart(name)
+);
+
+async function insertDocument(executor, data) {
+  const id = data.id || uuid();
+  const timestamp = data.createdAt || now();
+  await executor.execute(
+    `INSERT INTO documents
+      (id, original_name, storage_path, mime_type, file_size, file_ext, category,
+       entity_type, entity_id, archive_category, archive_date, archive_folder, archive_name,
+       visibility, version_no, checksum, status, created_by, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
+    [id, data.originalName, data.storagePath, data.mimeType || null, Number(data.fileSize || 0),
+      data.fileExt || path.extname(data.originalName || '').slice(1).toLowerCase() || null,
+      data.category || 'other', data.entityType || null, data.entityId || null,
+      data.archiveCategory || null, data.archiveDate || null, data.archiveFolder || null, data.archiveName || data.originalName || null,
+      data.visibility || 'all', Number(data.versionNo || 1), data.checksum || null,
+      data.createdBy, timestamp, timestamp]
+  );
+  return id;
+}
 
 function asyncRoute(handler) {
   return (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next);
@@ -74,9 +156,16 @@ function createApp() {
     message: { message: '请求过于频繁' }
   });
 
+  const externalRfqLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 30,
+    message: { message: '外部询价提交过于频繁，请稍后再试' }
+  });
+
   app.use('/api/auth/login', loginLimiter);
   app.use('/api/auth/register', loginLimiter);
   app.use('/api/', apiLimiter);
+  app.use('/api/external/rfqs', externalRfqLimiter);
 
   app.use((req, res, next) => {
     const start = Date.now();
@@ -95,6 +184,7 @@ function createApp() {
     await getPool().query('SELECT 1');
     res.json({ ok: true, service: 'LATIC RFQ Server', time: new Date().toISOString() });
   }));
+  app.get('/api/version', (req, res) => res.json({ version: packageVersion }));
 
   app.get('/api/setup/status', asyncRoute(async (req, res) => {
     const [[row]] = await getPool().query('SELECT COUNT(*) AS count FROM users');
@@ -111,45 +201,67 @@ function createApp() {
     const timestamp = now();
     await getPool().execute(
       `INSERT INTO users
-       (id, username, display_name, password_hash, password_salt, role, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'admin', 'active', ?, ?)`,
+       (id, username, display_name, password_hash, password_salt, role, status, requested_role, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'admin', 'active', 'admin', ?, ?)`,
       [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, timestamp, timestamp]
     );
     res.status(201).json({ id, username, displayName, role: 'admin' });
   }));
 
   app.post('/api/auth/register', asyncRoute(async (req, res) => {
-    const { username, displayName, password, role } = req.body || {};
+    const { username, displayName, password, department, phone } = req.body || {};
     if (!username || !displayName) return res.status(400).json({ message: '请输入账号和姓名' });
-    const safeRole = ['admin', 'manager', 'purchaser', 'viewer'].includes(role) ? role : 'viewer';
+    const registrationToken = crypto.randomBytes(32).toString('hex');
+    const tokenHash = hashToken(registrationToken);
+    const safeRole = 'viewer';
     const passwordData = await hashPassword(password);
     const id = uuid();
     const timestamp = now();
+    const initialStatus = 'pending';
     try {
       await getPool().execute(
         `INSERT INTO users
-         (id, username, display_name, password_hash, password_salt, role, status, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, 'pending', timestamp, timestamp]
+         (id, username, display_name, password_hash, password_salt, role, status, requested_role, registration_token_hash, department, phone, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)`,
+        [id, username.trim(), displayName.trim(), passwordData.hash, passwordData.salt, safeRole, initialStatus, tokenHash, department?.trim() || null, phone?.trim() || null, timestamp, timestamp]
       );
     } catch (error) {
       if (error.code === 'ER_DUP_ENTRY') return res.status(409).json({ message: '该账号已经存在' });
       throw error;
     }
-    res.status(201).json({ id, status: 'pending', message: '注册成功，请等待管理员启用账号' });
+    res.status(201).json({
+      id,
+      status: initialStatus,
+      role: null,
+      registrationToken,
+      message: '账号创建成功，请继续选择职位。'
+    });
+  }));
+
+  app.post('/api/auth/register/role', asyncRoute(async (req, res) => {
+    const { registrationToken, role, department, phone } = req.body || {};
+    if (!registrationToken) return res.status(400).json({ message: '注册流程已失效，请重新注册' });
+    const safeRole = normalizeRole(role);
+    const [result] = await getPool().execute(
+      `UPDATE users SET role = ?, requested_role = ?, department = COALESCE(?, department), phone = COALESCE(?, phone), registration_token_hash = NULL, updated_at = ?
+       WHERE registration_token_hash = ? AND status = 'pending'`,
+      [safeRole, safeRole, department?.trim() || null, phone?.trim() || null, now(), hashToken(registrationToken)]
+    );
+    if (!result.affectedRows) return res.status(400).json({ message: '注册流程已失效，请重新注册' });
+    res.json({ status: 'pending', role: safeRole, message: '职位申请已提交，请等待负责人审核后登录。' });
   }));
 
   app.post('/api/auth/login', asyncRoute(async (req, res) => {
-    const { username, password, entrance } = req.body || {};
+    const { username, password } = req.body || {};
     const [[user]] = await getPool().execute('SELECT * FROM users WHERE username = ?', [username || '']);
     if (!user || !(await verifyPassword(password || '', user.password_salt, user.password_hash))) {
       return res.status(401).json({ message: '账号或密码错误' });
     }
     if (user.status !== 'active') return res.status(403).json({ message: '账号尚未启用或已被停用' });
-    if (entrance === 'admin' && !['admin', 'manager'].includes(user.role)) {
+    if (false && !['admin', 'manager'].includes(user.role)) {
       return res.status(403).json({ message: '该账号没有管理权限' });
     }
-    if (entrance === 'employee' && ['admin', 'manager'].includes(user.role)) {
+    if (false && ['admin', 'manager'].includes(user.role)) {
       return res.status(403).json({ message: '请从管理员入口登录' });
     }
     const token = createSessionToken();
@@ -159,6 +271,7 @@ function createApp() {
       [hashToken(token), user.id, expiresAt, now()]
     );
     req.session.userId = user.id;
+    res.cookie('latic_token', token, { httpOnly: true, sameSite: 'lax', maxAge: 30 * 24 * 60 * 60 * 1000 });
     const responseUser = { id: user.id, username: user.username, displayName: user.display_name, role: user.role };
     logger.info(`用户登录: ${user.display_name} (${user.role})`);
     res.json({ token, user: responseUser });
@@ -182,7 +295,7 @@ function createApp() {
       };
       return next();
     }
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '') || getCookie(req, 'latic_token');
     if (!token) return res.status(401).json({ message: '请先登录' });
     const [[user]] = await getPool().execute(
       `SELECT u.id, u.username, u.display_name displayName, u.role, u.status
@@ -205,17 +318,226 @@ function createApp() {
       ? next()
       : res.status(403).json({ message: '权限不足' });
 
+  // 海外端只允许提交询价文件，不授予任何数据库或国内任务权限。
+  // 密钥从服务器初始化配置中读取，比较时使用 timingSafeEqual 避免明文比较。
+  const authenticateExternal = (req, res, next) => {
+    const expected = String(config.externalApiKey || '');
+    const provided = String(req.headers['x-latic-external-key'] || req.body?.apiKey || '');
+    if (!expected || !provided) return res.status(401).json({ message: '缺少外部接收密钥' });
+    const expectedBuffer = Buffer.from(expected);
+    const providedBuffer = Buffer.from(provided);
+    if (expectedBuffer.length !== providedBuffer.length || !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
+      return res.status(401).json({ message: '外部接收密钥无效' });
+    }
+    next();
+  };
+
   app.get('/api/auth/me', authenticate, (req, res) => res.json({ user: req.user }));
   app.post('/api/auth/logout', authenticate, asyncRoute(async (req, res) => {
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '') || getCookie(req, 'latic_token');
     if (token) await getPool().execute('DELETE FROM sessions WHERE token_hash = ?', [hashToken(token)]);
     req.session.destroy(() => {});
+    res.clearCookie('latic_token');
     res.json({ ok: true });
   }));
 
-  app.get('/api/users', authenticate, asyncRoute(async (req, res) => {
+  /**
+   * 外部询价接收箱：海外端上传 Excel 后只产生一条 received 记录。
+   * 管理员调用 /accept 后才会生成国内协作任务和产品明细。
+   */
+  app.post('/api/external/rfqs', authenticateExternal, upload.single('file'), asyncRoute(async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: '请选择Excel询价表' });
+    const externalRequestId = String(req.body.externalRequestId || '').trim() || null;
+    if (externalRequestId) {
+      const [[existing]] = await getPool().execute(
+        'SELECT id, status, task_id AS taskId FROM external_rfq_submissions WHERE external_request_id = ?',
+        [externalRequestId]
+      );
+      if (existing) {
+        try { fs.unlinkSync(req.file.path); } catch (_) {}
+        return res.status(409).json({ message: '该外部询价编号已经提交过', submission: existing });
+      }
+    }
+
+    const submissionId = uuid();
+    const submissionDir = path.join(config.storageDir, 'external-rfqs', submissionId);
+    fs.mkdirSync(submissionDir, { recursive: true });
+    const safeOriginalName = path.basename(req.file.originalname || '询价表.xlsx').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    const sourcePath = path.join(submissionDir, safeOriginalName);
+    fs.renameSync(req.file.path, sourcePath);
+
+    let imported;
+    try {
+      imported = await importRfqWorkbook(sourcePath);
+    } catch (error) {
+      try { fs.rmSync(submissionDir, { recursive: true, force: true }); } catch (_) {}
+      return res.status(422).json({ message: `无法识别询价表：${error.message}` });
+    }
+
+    const metadata = {
+      requester: req.body.requester || imported.metadata.requester || null,
+      country: req.body.country || imported.metadata.country || null,
+      client: req.body.client || imported.metadata.client || null,
+      requestDate: req.body.requestDate || imported.metadata.requestDate || null,
+      deadline: req.body.deadline || null,
+      sheetName: imported.sheetName,
+      headerRow: imported.headerRow,
+      tableCount: imported.tableCount,
+      tables: imported.tables,
+      sourceChannel: 'external'
+    };
+    await getPool().execute(
+      `INSERT INTO external_rfq_submissions
+       (id, external_request_id, title, requester, country, client_name, request_date, deadline,
+        original_name, storage_path, metadata_json, parsed_items_json, status, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?)`,
+      [submissionId, externalRequestId,
+        String(req.body.title || safeOriginalName.replace(/\.xlsx$/i, '')),
+        metadata.requester, metadata.country, metadata.client, metadata.requestDate, metadata.deadline,
+        safeOriginalName, sourcePath, json(metadata), json(imported.items), now()]
+    );
+    res.status(201).json({
+      id: submissionId,
+      externalRequestId,
+      status: 'received',
+      title: String(req.body.title || safeOriginalName.replace(/\.xlsx$/i, '')),
+      itemCount: imported.items.length,
+      message: '询价表已送达国内接收箱，等待管理员下发'
+    });
+  }));
+
+  app.get('/api/external/rfqs', authenticate, asyncRoute(async (req, res) => {
+    const ownOnly = req.user.role === 'viewer';
+    const [rows] = await getPool().execute(
+      `SELECT e.id, e.external_request_id AS externalRequestId, e.title, e.requester, e.country,
+              e.client_name AS clientName, e.request_date AS requestDate, e.deadline,
+              e.original_name AS originalName, e.status, e.received_at AS receivedAt,
+              e.reviewed_at AS reviewedAt, e.reviewed_by AS reviewedBy, e.task_id AS taskId,
+              e.rejection_reason AS rejectionReason, e.parsed_items_json AS parsedItems,
+              t.status AS taskStatus
+       FROM external_rfq_submissions e LEFT JOIN rfq_tasks t ON t.id = e.task_id
+       ${ownOnly ? 'WHERE e.created_by = ?' : ''} ORDER BY e.received_at DESC LIMIT 200`,
+      ownOnly ? [req.user.id] : []
+    );
+    res.json({ submissions: rows.map(row => ({
+      ...row,
+      itemCount: parseJson(row.parsedItems, []).length,
+      parsedItems: undefined
+    })) });
+  }));
+
+  app.post('/api/external/rfqs/:id/reject', authenticate, requireRole('manager'), asyncRoute(async (req, res) => {
+    const reason = String(req.body?.reason || '').trim();
+    const result = await getPool().execute(
+      `UPDATE external_rfq_submissions SET status = 'rejected', rejection_reason = ?, reviewed_at = ?, reviewed_by = ?
+       WHERE id = ? AND status = 'received'`,
+      [reason || null, now(), req.user.id, req.params.id]
+    );
+    if (!result[0].affectedRows) return res.status(404).json({ message: '待接收询价不存在或已经处理' });
+    res.json({ ok: true, status: 'rejected' });
+  }));
+
+  app.post('/api/external/rfqs/:id/accept', authenticate, requireRole('manager'), asyncRoute(async (req, res) => {
+    const [[submission]] = await getPool().execute(
+      'SELECT * FROM external_rfq_submissions WHERE id = ? AND status = \'received\'', [req.params.id]
+    );
+    if (!submission) return res.status(404).json({ message: '待接收询价不存在或已经处理' });
+    const items = parseJson(submission.parsed_items_json, []);
+    const metadata = parseJson(submission.metadata_json, {});
+    const taskId = uuid();
+    const taskDir = path.join(config.storageDir, 'tasks', taskId);
+    fs.mkdirSync(taskDir, { recursive: true });
+    const sourcePath = path.join(taskDir, submission.original_name);
+    fs.copyFileSync(submission.storage_path, sourcePath);
+    const taskNo = String(req.body?.taskNo || `RFQ-${new Date().toISOString().slice(0, 10)}-${Date.now().toString().slice(-4)}`);
+    const title = String(req.body?.title || submission.title);
+    const timestamp = now();
+    await withTransaction(async connection => {
+      await connection.execute(
+        `INSERT INTO rfq_tasks
+         (id, task_no, title, requester, country, client_name, request_date, deadline,
+          import_type, delivery_type, payment_type, status, source_original_name,
+          source_storage_path, assigned_user_ids, metadata_json, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, ?, ?, ?, ?, ?)`,
+        [taskId, taskNo, title, submission.requester, submission.country, submission.client_name,
+          submission.request_date, req.body?.deadline || submission.deadline || null,
+          metadata.importType || null, metadata.deliveryType || null, metadata.paymentType || null,
+          submission.original_name, sourcePath, json(parseJson(req.body?.assignedUserIds, [])),
+          json({ ...metadata, sourceChannel: 'external', submissionId: submission.id, externalRequestId: submission.external_request_id }),
+          req.user.id, timestamp, timestamp]
+      );
+      for (const item of items) {
+        await connection.execute(
+          `INSERT INTO rfq_items
+           (id, task_id, line_no, description, quantity, unit, product_code, ltc, remarks,
+            attachments_json, source_json, row_version, updated_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', ?, 1, ?, ?, ?)`,
+          [uuid(), taskId, item.lineNo, item.description || '', item.quantity || null, item.unit || null,
+            item.code || null, item.ltc || null, item.observation || null, json(item.source || item),
+            req.user.id, timestamp, timestamp]
+        );
+      }
+      await insertDocument(connection, {
+        originalName: submission.original_name,
+        storagePath: sourcePath,
+        mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        fileSize: fs.statSync(sourcePath).size,
+        category: 'rfq', entityType: 'rfq_task', entityId: taskId,
+        createdBy: req.user.id, visibility: 'all'
+      });
+      await createNotifications(connection, taskId, '收到新询价任务', `${title}，共 ${items.length} 项产品`);
+      await connection.execute(
+        `UPDATE external_rfq_submissions SET status = 'accepted', reviewed_at = ?, reviewed_by = ?, task_id = ? WHERE id = ?`,
+        [timestamp, req.user.id, taskId, submission.id]
+      );
+      await connection.execute(
+        `INSERT INTO audit_logs (entity_type, entity_id, action, after_json, user_id, created_at)
+         VALUES ('task', ?, 'external_accept', ?, ?, ?)`,
+        [taskId, json({ taskNo, title, itemCount: items.length, submissionId: submission.id }), req.user.id, timestamp]
+      );
+    });
+    res.status(201).json({ id: taskId, taskNo, title, itemCount: items.length, status: 'published' });
+  }));
+
+  app.get('/api/external/rfqs/:id/result', authenticate, asyncRoute(async (req, res) => {
+    const ownershipClause = req.user.role === 'viewer' ? 'AND e.created_by = ?' : '';
+    const params = req.user.role === 'viewer' ? [req.params.id, req.user.id] : [req.params.id];
+    const [[record]] = await getPool().execute(
+      `SELECT e.title, e.original_name AS originalName, e.task_id AS taskId,
+              t.status AS taskStatus, t.source_storage_path AS sourcePath
+       FROM external_rfq_submissions e JOIN rfq_tasks t ON t.id = e.task_id
+       WHERE e.id = ? ${ownershipClause}`,
+      params
+    );
+    if (!record) return res.status(404).json({ message: '询价单或审核结果不存在' });
+    if (!['submitted', 'completed'].includes(record.taskStatus)) {
+      return res.status(409).json({ message: '询价结果尚未通过总经理审核' });
+    }
+    if (!record.sourcePath || !fs.existsSync(record.sourcePath)) {
+      return res.status(404).json({ message: '原始询价单文件不存在' });
+    }
+    const [items] = await getPool().execute(
+      `SELECT line_no AS lineNo, fob_usd AS fobUsd, total_rmb AS totalRmb, remarks,
+              attachments_json AS attachments, source_json AS source
+       FROM rfq_items WHERE task_id = ? ORDER BY line_no`,
+      [record.taskId]
+    );
+    const outputDir = path.join(config.storageDir, 'tasks', record.taskId, 'exports');
+    fs.mkdirSync(outputDir, { recursive: true });
+    const baseName = path.basename(record.originalName || '询价单.xlsx').replace(/\.xlsx$/i, '');
+    const downloadName = `已审核_${baseName}.xlsx`;
+    const outputPath = path.join(outputDir, `${Date.now()}-${downloadName}`);
+    await exportCompletedRfq(record.sourcePath, outputPath, items.map(item => ({
+      ...item,
+      attachments: parseJson(item.attachments, []),
+      source: parseJson(item.source, {})
+    })));
+    res.download(outputPath, downloadName);
+  }));
+
+  app.get('/api/users', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const [rows] = await getPool().query(
-      `SELECT id, username, display_name AS displayName, role, status, created_at AS createdAt
+       `SELECT id, username, display_name AS displayName, role, requested_role AS requestedRole, department, phone, language, status, created_at AS createdAt
        FROM users ORDER BY role, display_name`
     );
     res.json({ users: rows });
@@ -226,10 +548,10 @@ function createApp() {
     await getPool().execute('UPDATE users SET status = ?, updated_at = ? WHERE id = ?', [status, now(), req.params.id]);
     res.json({ ok: true });
   }));
-  app.patch('/api/users/:id/role', authenticate, requireRole('admin'), asyncRoute(async (req, res) => {
+  app.patch('/api/users/:id/role', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const role = ['admin', 'manager', 'purchaser', 'viewer'].includes(req.body?.role) ? req.body.role : null;
     if (!role) return res.status(400).json({ message: '无效的角色，可选：admin, manager, purchaser, viewer' });
-    await getPool().execute('UPDATE users SET role = ?, updated_at = ? WHERE id = ?', [role, now(), req.params.id]);
+    await getPool().execute('UPDATE users SET role = ?, requested_role = ?, updated_at = ? WHERE id = ?', [role, role, now(), req.params.id]);
     logger.info(`用户角色变更: ${req.params.id} -> ${role} by ${req.user.displayName}`);
     res.json({ ok: true });
   }));
@@ -264,21 +586,32 @@ function createApp() {
     const timestamp = now();
     const template = req.body || {};
     if (!template.name) return res.status(400).json({ message: '模板名称不能为空' });
+    const [[existing]] = await getPool().execute(
+      'SELECT storage_path, structure_json, mappings_json FROM user_templates WHERE id = ?',
+      [id]
+    );
+    let generated = null;
+    if (!existing && !template.structure) {
+      generated = await createGeneratedTemplateFile(id, template.fields);
+    }
+    const storagePath = template.storagePath || generated?.storagePath || existing?.storage_path || null;
+    const structureJson = template.structure || generated?.structure || parseJson(existing?.structure_json, null);
+    const mappingsJson = template.mappings || generated?.mappings || parseJson(existing?.mappings_json, []);
     const isShared = template.isShared != null ? (template.isShared ? 1 : 0) : 0;
     await getPool().execute(
       `INSERT INTO user_templates
-       (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (id, owner_id, name, type, description, original_name, storage_path, structure_json, mappings_json, is_shared, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON DUPLICATE KEY UPDATE name = VALUES(name), type = VALUES(type), is_shared = VALUES(is_shared), updated_at = VALUES(updated_at)`,
       [id, req.user.id, template.name, template.type || '通用', template.description || null,
-        template.originalName || null, json(template.structure), json(template.mappings || []),
+        template.originalName || null, storagePath, json(structureJson), json(mappingsJson),
         isShared, id === req.body.id ? undefined : timestamp, timestamp]
     );
-    res.status(201).json({ id });
+    res.status(201).json({ id, structure: structureJson, mappings: mappingsJson });
   }));
 
   async function createNotifications(connection, taskId, title, message) {
-    const [users] = await connection.query("SELECT id FROM users WHERE status = 'active'");
+    const [users] = await connection.query("SELECT id FROM users WHERE status = 'active' AND role = 'manager'");
     for (const user of users) {
       await connection.execute(
         `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
@@ -288,7 +621,7 @@ function createApp() {
     }
   }
 
-  app.post('/api/tasks/import', authenticate, requireRole('admin', 'manager'), upload.single('file'), asyncRoute(async (req, res) => {
+  app.post('/api/tasks/import', authenticate, requireRole('manager'), upload.single('file'), asyncRoute(async (req, res) => {
     if (!req.file) return res.status(400).json({ message: '请选择Excel询价单' });
     let imported;
     try {
@@ -304,8 +637,13 @@ function createApp() {
     const sourcePath = path.join(taskDir, safeOriginalName);
     fs.renameSync(req.file.path, sourcePath);
     const taskNo = String(req.body.taskNo || `RFQ-${new Date().toISOString().slice(0, 10)}-${Date.now().toString().slice(-4)}`);
-    const title = String(req.body.title || safeOriginalName.replace(/\.xlsx$/i, ''));
+      const title = String(req.body.title || safeOriginalName.replace(/\.xlsx$/i, ''));
     const timestamp = now();
+    const archiveDate = localDate(imported.metadata.requestDate || timestamp);
+    const archiveFolder = archiveFolderName(archiveDate, title);
+    const archiveSourcePath = archiveStoragePath(config.storageDir, '询价表', archiveDate, archiveFolder, safeOriginalName);
+    fs.mkdirSync(path.dirname(archiveSourcePath), { recursive: true });
+    fs.copyFileSync(sourcePath, archiveSourcePath);
     await withTransaction(async connection => {
       await connection.execute(
         `INSERT INTO rfq_tasks
@@ -317,7 +655,7 @@ function createApp() {
           imported.metadata.client || null, imported.metadata.requestDate || null, req.body.deadline || null,
           imported.metadata.importType || null, imported.metadata.deliveryType || null,
           imported.metadata.paymentType || null, safeOriginalName, sourcePath,
-          json(parseJson(req.body.assignedUserIds, [])), json({ sheetName: imported.sheetName, headerRow: imported.headerRow }),
+          json(parseJson(req.body.assignedUserIds, [])), json({ sheetName: imported.sheetName, headerRow: imported.headerRow, tableCount: imported.tableCount, tables: imported.tables }),
           req.user.id, timestamp, timestamp]
       );
       for (const item of imported.items) {
@@ -331,6 +669,14 @@ function createApp() {
             req.user.id, timestamp, timestamp]
         );
       }
+      await insertDocument(connection, {
+        originalName: safeOriginalName, storagePath: archiveSourcePath,
+        mimeType: req.file.mimetype || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        fileSize: fs.statSync(sourcePath).size, category: '询价表', entityType: 'rfq_task',
+        entityId: taskId, archiveCategory: '询价表',
+        archiveDate, archiveFolder,
+        archiveName: safeOriginalName, createdBy: req.user.id, visibility: 'all'
+      });
       await createNotifications(connection, taskId, '收到新询价任务', `${title}，共 ${imported.items.length} 项产品`);
       await connection.execute(
         `INSERT INTO audit_logs (entity_type, entity_id, action, after_json, user_id, created_at)
@@ -348,11 +694,18 @@ function createApp() {
               t.import_type AS importType, t.delivery_type AS deliveryType,
               t.status, t.assigned_user_ids AS assignedUserIds, t.updated_at AS updatedAt,
               COUNT(i.id) AS itemCount,
-              SUM(CASE WHEN i.fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS completedCount
+              SUM(CASE WHEN i.fob_usd IS NOT NULL THEN 1 ELSE 0 END) AS completedCount,
+              MAX(CASE WHEN i.assigned_user_id = ? THEN 1 ELSE 0 END) AS itemAssigned,
+              MAX(CASE WHEN i.assigned_user_id IS NULL OR i.assigned_user_id = ? THEN 1 ELSE 0 END) AS itemAvailable
        FROM rfq_tasks t LEFT JOIN rfq_items i ON i.task_id = t.id
-       GROUP BY t.id ORDER BY t.updated_at DESC`
+       GROUP BY t.id ORDER BY t.updated_at DESC`,
+      [req.user.id, req.user.id]
     );
-    res.json({ tasks: rows.map(row => ({
+    const visibleRows = req.user.role === 'viewer' ? []
+      : req.user.role === 'purchaser' ? rows.filter(row => Number(row.itemAvailable) === 1)
+        : req.user.role === 'admin' ? rows.filter(row => ['review', 'submitted', 'completed'].includes(row.status))
+          : rows;
+    res.json({ tasks: visibleRows.map(row => ({
       ...row,
       assignedUserIds: parseJson(row.assignedUserIds, []),
       itemCount: Number(row.itemCount || 0),
@@ -396,6 +749,10 @@ function createApp() {
       [req.params.id]
     );
     if (!task) return res.status(404).json({ message: '任务不存在' });
+    if (req.user.role === 'viewer') return res.status(403).json({ message: '海外业务员不参与国内询价任务' });
+    if (req.user.role === 'admin' && !['review', 'submitted', 'completed'].includes(task.status)) {
+      return res.status(403).json({ message: '该询价单尚未提交总经理审核' });
+    }
     const [items] = await getPool().execute(
       `SELECT i.id, i.line_no AS lineNo, i.description, i.quantity, i.unit,
               i.product_code AS productCode, i.ltc, i.fob_usd AS fobUsd,
@@ -404,13 +761,18 @@ function createApp() {
               i.selected_supplier AS selectedSupplier, i.selected_quote_json AS selectedQuote,
               i.remarks, i.attachments_json AS attachments,
               i.source_json AS source, i.row_version AS rowVersion,
+              i.assigned_user_id AS assignedUserId, au.display_name AS assignedUserName,
               i.updated_at AS updatedAt, u.display_name AS updatedByName
        FROM rfq_items i LEFT JOIN users u ON u.id = i.updated_by
+       LEFT JOIN users au ON au.id = i.assigned_user_id
        WHERE i.task_id = ? ORDER BY i.line_no`,
       [req.params.id]
     );
     task.assignedUserIds = parseJson(task.assignedUserIds, []);
-    res.json({ task, items: items.map(item => ({
+    // Purchasers can see the complete shared table. Unassigned rows are open
+    // to the team; assigned rows remain editable only by their assignee.
+    const visibleItems = items;
+    res.json({ task, items: visibleItems.map(item => ({
       ...item,
       attachments: parseJson(item.attachments, []).map(({ storagePath, ...attachment }) => attachment),
       selectedQuote: parseJson(item.selectedQuote, {}),
@@ -429,9 +791,9 @@ function createApp() {
     res.download(task.source_storage_path, task.source_original_name);
   }));
 
-  app.get('/api/tasks/:id/export', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.get('/api/tasks/:id/export', authenticate, requireRole('admin', 'manager', 'purchaser'), asyncRoute(async (req, res) => {
     const [[task]] = await getPool().execute(
-      'SELECT id, source_original_name, source_storage_path FROM rfq_tasks WHERE id = ?',
+      'SELECT id, title, request_date, created_at, source_original_name, source_storage_path FROM rfq_tasks WHERE id = ?',
       [req.params.id]
     );
     if (!task || !task.source_storage_path || !fs.existsSync(task.source_storage_path)) {
@@ -439,7 +801,7 @@ function createApp() {
     }
     const [items] = await getPool().execute(
       `SELECT line_no AS lineNo, fob_usd AS fobUsd, total_rmb AS totalRmb, remarks,
-              attachments_json AS attachments
+              attachments_json AS attachments, source_json AS source
        FROM rfq_items WHERE task_id = ? ORDER BY line_no`,
       [req.params.id]
     );
@@ -450,14 +812,48 @@ function createApp() {
     const outputPath = path.join(exportDir, `${Date.now()}-${downloadName}`);
     await exportCompletedRfq(task.source_storage_path, outputPath, items.map(item => ({
       ...item,
-      attachments: parseJson(item.attachments, [])
+      attachments: parseJson(item.attachments, []),
+      source: parseJson(item.source, {})
     })));
+    await insertDocument(getPool(), {
+      originalName: downloadName, storagePath: outputPath,
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      fileSize: fs.statSync(outputPath).size, category: '询价表', entityType: 'rfq_task',
+      entityId: task.id, archiveCategory: '询价表',
+      archiveDate: localDate(task.request_date || task.created_at),
+      archiveFolder: archiveFolderName(localDate(task.request_date || task.created_at), task.title),
+      archiveName: downloadName, createdBy: req.user.id, visibility: 'all'
+    });
     await getPool().execute(
       `INSERT INTO audit_logs (entity_type, entity_id, action, after_json, user_id, created_at)
        VALUES ('task', ?, 'export', ?, ?, ?)`,
       [task.id, json({ fileName: downloadName, itemCount: items.length }), req.user.id, now()]
     );
     res.download(outputPath, downloadName);
+  }));
+
+  app.patch('/api/tasks/:taskId/items/:itemId/assignee', authenticate, requireRole('manager'), asyncRoute(async (req, res) => {
+    const assignedUserId = req.body?.assignedUserId || null;
+    if (assignedUserId) {
+      const [[assignee]] = await getPool().execute(
+        "SELECT id, display_name AS displayName FROM users WHERE id = ? AND status = 'active' AND role = 'purchaser'",
+        [assignedUserId]
+      );
+      if (!assignee) return res.status(400).json({ message: '只能分配给已启用的采购专员' });
+    }
+    const [result] = await getPool().execute(
+      'UPDATE rfq_items SET assigned_user_id = ?, updated_by = ?, updated_at = ? WHERE id = ? AND task_id = ?',
+      [assignedUserId, req.user.id, now(), req.params.itemId, req.params.taskId]
+    );
+    if (!result.affectedRows) return res.status(404).json({ message: '产品明细不存在' });
+    if (assignedUserId) {
+      await getPool().execute(
+        `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
+         VALUES (?, ?, 'assignment', '收到产品询价任务', '主管已分配一项产品给你', ?, 0, ?)`,
+        [uuid(), assignedUserId, req.params.taskId, now()]
+      );
+    }
+    res.json({ ok: true, assignedUserId });
   }));
 
   app.patch('/api/tasks/:taskId/items/:itemId', authenticate, asyncRoute(async (req, res) => {
@@ -468,6 +864,12 @@ function createApp() {
         [req.params.itemId, req.params.taskId]
       );
       if (!current) return { notFound: true };
+      // Purchasers may work on any unassigned product in a shared RFQ. Once a
+      // supervisor assigns a row, only that purchaser edits it. row_version
+      // below protects against two people saving the exact same row at once.
+      if (req.user.role === 'viewer' || (req.user.role === 'purchaser' && current.assigned_user_id && current.assigned_user_id !== req.user.id)) {
+        return { forbidden: true };
+      }
       if (!Number.isInteger(expectedVersion) || current.row_version !== expectedVersion) {
         return { conflict: true, current };
       }
@@ -505,6 +907,7 @@ function createApp() {
         updatedAt: timestamp };
     });
     if (result.notFound) return res.status(404).json({ message: '产品明细不存在' });
+    if (result.forbidden) return res.status(403).json({ message: '该产品没有分配给你' });
     if (result.conflict) return res.status(409).json({
       message: '该行刚刚被其他员工修改，请刷新后比较数据',
       current: result.current
@@ -544,6 +947,11 @@ function createApp() {
       'UPDATE rfq_items SET attachments_json = ?, updated_by = ?, updated_at = ?, row_version = row_version + 1 WHERE id = ?',
       [json(attachments), req.user.id, now(), req.params.itemId]
     );
+    await insertDocument(getPool(), {
+      originalName: safeName, storagePath: targetPath, mimeType: req.file.mimetype,
+      fileSize: req.file.size, category: 'attachment', entityType: 'rfq_item',
+      entityId: req.params.itemId, createdBy: req.user.id, visibility: 'all'
+    });
     res.status(201).json({ attachment: { ...attachment, storagePath: undefined } });
   }));
 
@@ -614,7 +1022,7 @@ function createApp() {
 
   app.post('/api/tasks/:id/submit-review', authenticate, asyncRoute(async (req, res) => {
     await getPool().execute('UPDATE rfq_tasks SET status = ?, updated_at = ? WHERE id = ?', ['review', now(), req.params.id]);
-    const [reviewers] = await getPool().query("SELECT id FROM users WHERE role IN ('admin','manager') AND status = 'active'");
+    const [reviewers] = await getPool().query("SELECT id FROM users WHERE role = 'admin' AND status = 'active'");
     for (const reviewer of reviewers) {
       await getPool().execute(
         `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
@@ -625,7 +1033,7 @@ function createApp() {
     res.json({ ok: true });
   }));
 
-  app.post('/api/tasks/:id/snapshots', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
+  app.post('/api/tasks/:id/snapshots', authenticate, requireRole('admin'), asyncRoute(async (req, res) => {
     const result = await withTransaction(async connection => {
       const [[task]] = await connection.execute('SELECT * FROM rfq_tasks WHERE id = ? FOR UPDATE', [req.params.id]);
       if (!task) return null;
@@ -643,6 +1051,17 @@ function createApp() {
       return { version };
     });
     if (!result) return res.status(404).json({ message: '任务不存在' });
+    const [[external]] = await getPool().execute(
+      'SELECT created_by AS createdBy, title FROM external_rfq_submissions WHERE task_id = ?',
+      [req.params.id]
+    );
+    if (external?.createdBy) {
+      await getPool().execute(
+        `INSERT INTO notifications (id, user_id, type, title, message, task_id, is_read, created_at)
+         VALUES (?, ?, 'rfq_result', '询价结果已通过审核', ?, ?, 0, ?)`,
+        [uuid(), external.createdBy, `${external.title} 已可下载`, req.params.id, now()]
+      );
+    }
     res.status(201).json(result);
   }));
 
@@ -684,8 +1103,25 @@ function createApp() {
     res.json({ ok: true });
   }));
   app.get('/api/templates/:id/structure', authenticate, asyncRoute(async (req, res) => {
-    const [[row]] = await getPool().execute('SELECT structure_json FROM user_templates WHERE id = ?', [req.params.id]);
-    res.json(row ? parseJson(row.structure_json, {}) : {});
+    const [[row]] = await getPool().execute(
+      'SELECT structure_json, storage_path FROM user_templates WHERE id = ?',
+      [req.params.id]
+    );
+    let structure = row ? parseJson(row.structure_json, {}) : {};
+    if ((!structure || !Array.isArray(structure.columns) || structure.columns.length === 0) &&
+        row?.storage_path && fs.existsSync(row.storage_path)) {
+      try {
+        const parsed = await parseTemplateStructure(row.storage_path);
+        structure = parsed.structure;
+        await getPool().execute(
+          'UPDATE user_templates SET structure_json = ?, updated_at = ? WHERE id = ?',
+          [json(structure), now(), req.params.id]
+        );
+      } catch (error) {
+        logger.warn(`模板结构自动修复失败 ${req.params.id}: ${error.message}`);
+      }
+    }
+    res.json(structure || {});
   }));
   app.get('/api/templates/:id/mappings', authenticate, asyncRoute(async (req, res) => {
     const [[row]] = await getPool().execute('SELECT mappings_json FROM user_templates WHERE id = ?', [req.params.id]);
@@ -724,12 +1160,21 @@ function createApp() {
     const { structure, fields } = await parseTemplateStructure(storagePath);
     try { fs.unlinkSync(req.file.path); } catch (_) {}
     const timestamp = now();
-    const name = String(req.body.name || path.basename(req.file.originalname, '.xlsx'));
+    const originalName = decodeUploadedName(req.file.originalname || 'template.xlsx');
+    const name = decodeUploadedName(req.body.name || path.basename(originalName, path.extname(originalName))) || '未命名模板';
+    const [customFieldRows] = await getPool().query(
+      'SELECT field_key AS `key`, label, category, data_type AS dataType FROM custom_system_fields'
+    );
+    const availableSystemFields = [...BUILTIN_SYSTEM_FIELDS, ...customFieldRows];
+    const inferredMappings = fields.map(templateField => ({
+      templateField,
+      systemField: inferSystemFieldKey(templateField, availableSystemFields, { allowUnknown: false })
+    })).filter(mapping => mapping.systemField);
     await getPool().execute(
       `INSERT INTO user_templates (id, owner_id, name, type, description, original_name, structure_json, mappings_json, is_shared, storage_path, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, req.user.id, name, req.body.type || '通用', req.body.description || null, req.file.originalname,
-       json(structure), json(fields.map(f => ({ templateField: f, systemField: f }))), 0, storagePath, timestamp, timestamp]
+      [id, req.user.id, name, req.body.type || '通用', req.body.description || null, originalName,
+       json(structure), json(inferredMappings), 0, storagePath, timestamp, timestamp]
     );
     res.json({ id, name, fields, structure });
   }));
@@ -781,10 +1226,23 @@ function createApp() {
   app.post('/api/excel/generate', authenticate, asyncRoute(async (req, res) => {
     const { templateId, batches, options } = req.body || {};
     if (!templateId) return res.status(400).json({ message: '请先选择模板' });
-    const outputPath = await generateExcel(templateId, batches, options);
-    res.download(outputPath, `生成表格_${new Date().toISOString().slice(0,10)}.xlsx`, () => {
-      try { fs.unlinkSync(outputPath); } catch (_) {}
+    const generatedPath = await generateExcel(templateId, batches, options);
+    const downloadName = path.basename(String(req.body.fileName || req.body.savePath || `generated_${localDate()}.xlsx`)).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    const archiveDate = localDate(req.body.archiveDate || now());
+    const archiveCategory = inferArchiveCategory(downloadName, req.body.archiveCategory || 'quote');
+    const archiveFolder = archiveFolderName(archiveDate, req.body.archiveFolder || downloadName.replace(/\.xlsx$/i, ''));
+    const outputPath = archiveStoragePath(config.storageDir, archiveCategory, archiveDate, archiveFolder, downloadName);
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    fs.copyFileSync(generatedPath, outputPath);
+    try { fs.unlinkSync(generatedPath); } catch (_) {}
+    await insertDocument(getPool(), {
+      originalName: downloadName, storagePath: outputPath,
+      mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      fileSize: fs.statSync(outputPath).size, category: archiveCategory,
+      archiveCategory, archiveDate, archiveFolder, archiveName: downloadName,
+      entityType: 'generated_excel', createdBy: req.user.id, visibility: 'all'
     });
+    res.download(outputPath, downloadName);
   }));
 
   app.get('/api/data/entries', authenticate, asyncRoute(async (req, res) => {
@@ -837,16 +1295,73 @@ function createApp() {
 
   app.get('/api/fields', authenticate, asyncRoute(async (req, res) => {
     const [rows] = await getPool().query('SELECT field_key AS `key`, label, category, data_type AS dataType FROM custom_system_fields ORDER BY label');
-    res.json({ fields: rows });
+    const custom = rows.map(row => ({ ...row, isBuiltin: false, isCustom: true }));
+    const keys = new Set(custom.map(row => row.key));
+    res.json({ fields: [...BUILTIN_SYSTEM_FIELDS.filter(field => !keys.has(field.key)).map(field => ({ ...field, isCustom: false })), ...custom] });
+  }));
+
+  // Signed-in overseas staff submit from the web page. Their account is recorded
+  // so that the same user can later see the returned result without domestic access.
+  app.post('/api/external/rfqs/submit', authenticate, requireRole('viewer'), upload.single('file'), asyncRoute(async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: '请选择 Excel 询价表' });
+    const submissionId = uuid();
+    const submissionDir = path.join(config.storageDir, 'external-rfqs', submissionId);
+    fs.mkdirSync(submissionDir, { recursive: true });
+    const decodedName = decodeUploadedName(req.file.originalname || '询价表.xlsx');
+    const safeOriginalName = path.basename(decodedName).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    const sourcePath = path.join(submissionDir, safeOriginalName);
+    fs.renameSync(req.file.path, sourcePath);
+    let imported;
+    try {
+      imported = await importRfqWorkbook(sourcePath);
+    } catch (error) {
+      try { fs.rmSync(submissionDir, { recursive: true, force: true }); } catch (_) {}
+      return res.status(422).json({ message: `无法识别询价表：${error.message}` });
+    }
+    const metadata = {
+      requester: req.body.requester || req.user.displayName,
+      country: req.body.country || imported.metadata.country || null,
+      client: req.body.client || imported.metadata.client || null,
+      requestDate: req.body.requestDate || imported.metadata.requestDate || null,
+      deadline: req.body.deadline || null,
+      sheetName: imported.sheetName,
+      headerRow: imported.headerRow,
+      tableCount: imported.tableCount,
+      tables: imported.tables,
+      sourceChannel: 'overseas_web'
+    };
+    const title = String(req.body.title || safeOriginalName.replace(/\.(?:xlsx|xls)$/i, ''));
+    await getPool().execute(
+      `INSERT INTO external_rfq_submissions
+       (id, title, requester, country, client_name, request_date, deadline, original_name,
+        storage_path, metadata_json, parsed_items_json, status, created_by, received_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'received', ?, ?)`,
+      [submissionId, title, metadata.requester, metadata.country, metadata.client,
+        metadata.requestDate, metadata.deadline, safeOriginalName, sourcePath,
+        json(metadata), json(imported.items), req.user.id, now()]
+    );
+    const [managers] = await getPool().query("SELECT id FROM users WHERE role = 'manager' AND status = 'active'");
+    for (const manager of managers) {
+      await getPool().execute(
+        `INSERT INTO notifications (id, user_id, type, title, message, is_read, created_at)
+         VALUES (?, ?, 'external_rfq', '收到海外询价单', ?, 0, ?)`,
+        [uuid(), manager.id, `${title}，共 ${imported.items.length} 项产品`, now()]
+      );
+    }
+    res.status(201).json({ id: submissionId, title, itemCount: imported.items.length, status: 'received' });
   }));
   app.post('/api/fields', authenticate, asyncRoute(async (req, res) => {
-    const { key, label, category, dataType } = req.body || {};
-    if (!key || !label) return res.status(400).json({ message: '字段标识和名称不能为空' });
+    const { key: requestedKey, label, category, dataType } = req.body || {};
+    if (!label) return res.status(400).json({ message: '字段名称不能为空' });
+    const baseKey = String(requestedKey || label).trim().replace(/[^a-zA-Z0-9_\u4e00-\u9fff]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || `custom_${Date.now()}`;
+    let key = baseKey;
+    let suffix = 2;
+    while (BUILTIN_SYSTEM_FIELDS.some(field => field.key === key)) key = `${baseKey}_${suffix++}`;
     await getPool().execute(
       'INSERT INTO custom_system_fields (field_key, label, category, data_type, created_by, created_at) VALUES (?,?,?,?,?,?)',
       [key, label, category || '自定义', dataType || 'text', req.user.id, now()]
     );
-    res.json({ ok: true });
+    res.status(201).json({ ok: true, field: { key, label, category: category || '自定义', dataType: dataType || 'text', isBuiltin: false, isCustom: true } });
   }));
   app.delete('/api/fields/:key', authenticate, asyncRoute(async (req, res) => {
     await getPool().execute('DELETE FROM custom_system_fields WHERE field_key = ?', [req.params.key]);
@@ -927,6 +1442,196 @@ function createApp() {
     res.json(await getToday(req.query.force === '1'));
   }));
 
+  // 资料中心：用户通过页面访问，数据库和物理文件路径不直接暴露给客户端。
+  app.get('/api/documents', authenticate, asyncRoute(async (req, res) => {
+    const page = Math.max(0, Number.parseInt(req.query.page, 10) || 0);
+    const pageSize = Math.min(100, Math.max(10, Number.parseInt(req.query.pageSize, 10) || 30));
+    const query = String(req.query.query || '').trim();
+    const category = String(req.query.category || '').trim();
+    const where = ["d.status = 'active'", "(d.visibility = 'all' OR d.created_by = ? OR ? IN ('admin','manager'))"];
+    const params = [req.user.id, req.user.role];
+    if (query) { where.push('(d.original_name LIKE ? OR d.entity_type LIKE ?)'); params.push(`%${query}%`, `%${query}%`); }
+    if (category && category !== 'all') { where.push('(d.category = ? OR d.archive_category = ?)'); params.push(category, category); }
+    const [rows] = await getPool().execute(
+      `SELECT d.id, d.original_name AS originalName, d.mime_type AS mimeType, d.file_size AS fileSize,
+              d.file_ext AS fileExt, d.category, d.entity_type AS entityType, d.entity_id AS entityId,
+              d.archive_category AS archiveCategory, d.archive_date AS archiveDate,
+              d.archive_folder AS archiveFolder, d.archive_name AS archiveName,
+              d.visibility, d.version_no AS versionNo, d.created_at AS createdAt,
+              u.display_name AS createdByName
+       FROM documents d JOIN users u ON u.id = d.created_by
+       WHERE ${where.join(' AND ')} ORDER BY d.created_at DESC LIMIT ${pageSize} OFFSET ${page * pageSize}`,
+      params
+    );
+    const [[countRow]] = await getPool().execute(`SELECT COUNT(*) AS total FROM documents d WHERE ${where.join(' AND ')}`, params);
+    res.json({ documents: rows.map(row => ({ ...row, fileSize: Number(row.fileSize || 0), versionNo: Number(row.versionNo || 1) })), total: Number(countRow.total || 0), page, pageSize });
+  }));
+
+  app.post('/api/documents', authenticate, upload.single('file'), asyncRoute(async (req, res) => {
+    if (!req.file) return res.status(400).json({ message: '请选择要归档的文件' });
+    const documentId = uuid();
+    const archiveDate = localDate(req.body.archiveDate || now());
+    const archiveCategory = inferArchiveCategory(req.file.originalname, req.body.archiveCategory || req.body.category);
+    const archiveFolder = archiveFolderName(archiveDate, req.body.archiveFolder || req.file.originalname);
+    const safeName = path.basename(req.file.originalname || '资料').replace(/[<>:"/\\|?*\x00-\x1F]/g, '_');
+    const targetPath = archiveStoragePath(config.storageDir, archiveCategory, archiveDate, archiveFolder, safeName);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.renameSync(req.file.path, targetPath);
+    const hash = crypto.createHash('sha256').update(fs.readFileSync(targetPath)).digest('hex');
+    await insertDocument(getPool(), {
+      id: documentId, originalName: safeName, storagePath: targetPath, mimeType: req.file.mimetype,
+      fileSize: req.file.size, category: archiveCategory,
+      archiveCategory, archiveDate, archiveFolder, archiveName: safeName,
+      entityType: String(req.body.entityType || '') || null, entityId: String(req.body.entityId || '') || null,
+      visibility: ['all', 'private', 'department', 'admin'].includes(req.body.visibility) ? req.body.visibility : 'all',
+      checksum: hash, createdBy: req.user.id
+    });
+    res.status(201).json({ id: documentId, originalName: safeName, category: archiveCategory, archiveCategory, archiveDate, archiveFolder });
+  }));
+
+  app.get('/api/documents/:id/download', authenticate, asyncRoute(async (req, res) => {
+    const [[document]] = await getPool().execute(
+      `SELECT d.*, u.display_name AS createdByName FROM documents d JOIN users u ON u.id = d.created_by
+       WHERE d.id = ? AND d.status = 'active'`, [req.params.id]
+    );
+    if (!document || (document.visibility !== 'all' && document.created_by !== req.user.id && !['admin', 'manager'].includes(req.user.role))) {
+      return res.status(404).json({ message: '资料不存在或无权访问' });
+    }
+    if (!document.storage_path || !fs.existsSync(document.storage_path)) return res.status(404).json({ message: '文件本体不存在' });
+    res.download(document.storage_path, document.original_name);
+  }));
+
+  // Inline preview for images, PDFs, and read-only table snapshots.
+  app.get('/api/documents/:id/preview', authenticate, asyncRoute(async (req, res) => {
+    const [[document]] = await getPool().execute(
+      `SELECT d.* FROM documents d WHERE d.id = ? AND d.status = 'active'`, [req.params.id]
+    );
+    if (!document || (document.visibility !== 'all' && document.created_by !== req.user.id && !['admin', 'manager'].includes(req.user.role))) {
+      return res.status(404).json({ message: '资料不存在或无权访问' });
+    }
+    if (!document.storage_path || !fs.existsSync(document.storage_path)) return res.status(404).json({ message: '文件本体不存在' });
+    const ext = String(document.file_ext || path.extname(document.original_name || '').slice(1)).toLowerCase();
+    const spreadsheet = ['xlsx', 'csv', 'tsv'].includes(ext);
+    if (spreadsheet) {
+      const escapeHtml = value => String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      const valueText = value => {
+        if (value == null) return '';
+        if (typeof value === 'object') {
+          if (Array.isArray(value.richText)) return value.richText.map(entry => entry.text || '').join('');
+          if (value.result != null) return value.result;
+          if (value.text != null) return value.text;
+        }
+        return value;
+      };
+      const renderTable = (name, rows) => `<section><h2>${escapeHtml(name)}</h2><div class="sheet-scroll"><table><tbody>${rows.map((row, rowIndex) => `<tr>${row.map(cell => `<${rowIndex === 0 ? 'th' : 'td'}>${escapeHtml(valueText(cell))}</${rowIndex === 0 ? 'th' : 'td'}>`).join('')}</tr>`).join('')}</tbody></table></div></section>`;
+      let sections = '';
+      if (ext === 'xlsx') {
+        const ExcelJS = require('exceljs');
+        const workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(document.storage_path);
+        sections = workbook.worksheets.map(sheet => {
+          const rows = [];
+          sheet.eachRow({ includeEmpty: false }, row => {
+            if (rows.length >= 200) return;
+            const values = [];
+            for (let column = 1; column <= Math.min(sheet.columnCount || 1, 40); column += 1) values.push(row.getCell(column).value);
+            while (values.length && (values[values.length - 1] == null || values[values.length - 1] === '')) values.pop();
+            if (values.length) rows.push(values);
+          });
+          return renderTable(sheet.name, rows);
+        }).join('');
+      } else {
+        const text = fs.readFileSync(document.storage_path, 'utf8').replace(/^\uFEFF/, '');
+        const delimiter = ext === 'tsv' ? '\t' : ',';
+        const rows = text.split(/\r?\n/).filter(Boolean).slice(0, 200).map(line => line.split(delimiter).slice(0, 40));
+        sections = renderTable(document.original_name, rows);
+      }
+      res.type('html').send(`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${escapeHtml(document.original_name)}</title><style>body{font:14px system-ui,sans-serif;margin:24px;color:#17365d;background:#f5f8fc}h1{font-size:20px}.sheet-scroll{overflow:auto;background:#fff;border:1px solid #dbe4ef;border-radius:10px;margin-bottom:22px}table{border-collapse:collapse;min-width:600px}th,td{border:1px solid #dbe4ef;padding:7px 10px;white-space:pre-wrap;text-align:left;vertical-align:top}th{background:#eaf1fb;font-weight:650}</style></head><body><h1>${escapeHtml(document.original_name)}</h1>${sections || '<p>文件没有可显示的内容。</p>'}</body></html>`);
+      return;
+    }
+    const previewable = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg'].includes(ext);
+    if (!previewable) return res.status(415).json({ message: '此文件类型暂不支持在线预览，请下载后查看' });
+    res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(document.original_name)}`);
+    if (document.mime_type) res.type(document.mime_type);
+    res.sendFile(path.resolve(document.storage_path));
+  }));
+
+  // Folder metadata is derived from active documents; empty folders are never created.
+  app.get('/api/document-folders', authenticate, asyncRoute(async (req, res) => {
+    const [rows] = await getPool().execute(
+      `SELECT archive_category AS archiveCategory, archive_date AS archiveDate,
+              archive_folder AS archiveFolder, COUNT(*) AS fileCount
+       FROM documents d
+       WHERE d.status = 'active' AND (d.visibility = 'all' OR d.created_by = ? OR ? IN ('admin','manager'))
+       GROUP BY archive_category, archive_date, archive_folder
+       ORDER BY archive_date DESC, archive_category, archive_folder`,
+      [req.user.id, req.user.role]
+    );
+    res.json({ folders: rows.map(row => ({ ...row, fileCount: Number(row.fileCount || 0) })) });
+  }));
+
+  // Rename a file and/or move it to another business folder without exposing disk paths.
+  app.patch('/api/documents/:id', authenticate, asyncRoute(async (req, res) => {
+    const [[document]] = await getPool().execute(
+      `SELECT * FROM documents WHERE id = ? AND status = 'active'`, [req.params.id]
+    );
+    if (!document) return res.status(404).json({ message: '资料不存在' });
+    if (document.created_by !== req.user.id && !['admin', 'manager', 'purchaser'].includes(req.user.role)) return res.status(403).json({ message: '无权修改此资料' });
+    const requestedName = req.body?.name == null ? document.original_name : String(req.body.name).trim();
+    const requestedFolder = req.body?.folder == null ? document.archive_folder : String(req.body.folder).trim();
+    const oldName = path.basename(document.original_name || '资料');
+    let safeName = path.basename(requestedName || oldName).replace(/[<>:"/\\|?*\x00-\x1F]/g, '_').trim();
+    if (!safeName) return res.status(400).json({ message: '文件名不能为空' });
+    if (!path.extname(safeName) && path.extname(oldName)) safeName += path.extname(oldName);
+    const safeFolder = safeArchivePart(requestedFolder || document.archive_folder || '未分类');
+    const archiveDate = localDate(document.archive_date || document.created_at);
+    const archiveCategory = document.archive_category || document.category || '其他资料';
+    const targetPath = archiveStoragePath(config.storageDir, archiveCategory, archiveDate, safeFolder, safeName);
+    if (path.resolve(targetPath) !== path.resolve(document.storage_path) && fs.existsSync(targetPath)) return res.status(409).json({ message: '目标位置已存在同名文件' });
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    if (document.storage_path && fs.existsSync(document.storage_path) && path.resolve(document.storage_path) !== path.resolve(targetPath)) fs.renameSync(document.storage_path, targetPath);
+    await getPool().execute(
+      `UPDATE documents SET original_name = ?, archive_name = ?, archive_folder = ?, storage_path = ?, file_ext = ?, updated_at = ?, version_no = version_no + 1 WHERE id = ?`,
+      [safeName, safeName, safeFolder, targetPath, path.extname(safeName).slice(1).toLowerCase() || null, now(), document.id]
+    );
+    res.json({ ok: true, id: document.id, originalName: safeName, archiveFolder: safeFolder, archiveDate });
+  }));
+
+  // Rename an entire derived folder (all files in it move together).
+  app.patch('/api/document-folders', authenticate, asyncRoute(async (req, res) => {
+    const category = archiveCategoryLabel(req.body?.archiveCategory || req.body?.category);
+    const date = localDate(req.body?.archiveDate || now());
+    const oldFolder = safeArchivePart(req.body?.archiveFolder);
+    const newFolder = safeArchivePart(req.body?.newName || req.body?.folder);
+    if (!req.body?.archiveFolder || !req.body?.newName || !newFolder) return res.status(400).json({ message: '请提供原文件夹和新名称' });
+    const [documents] = await getPool().execute(
+      `SELECT * FROM documents WHERE status = 'active' AND archive_category = ? AND archive_date = ? AND archive_folder = ?`,
+      [category, date, oldFolder]
+    );
+    if (!documents.length) return res.status(404).json({ message: '文件夹不存在或没有可见文件' });
+    if (documents.some(document => document.created_by !== req.user.id) && !['admin', 'manager', 'purchaser'].includes(req.user.role)) return res.status(403).json({ message: '无权修改此文件夹' });
+    const oldDir = path.dirname(documents[0].storage_path);
+    const newDir = archiveStoragePath(config.storageDir, category, date, newFolder, 'placeholder');
+    if (path.resolve(oldDir) !== path.resolve(path.dirname(newDir)) && fs.existsSync(path.dirname(newDir))) return res.status(409).json({ message: '目标文件夹已存在' });
+    fs.mkdirSync(path.dirname(newDir), { recursive: true });
+    if (path.resolve(oldDir) !== path.resolve(path.dirname(newDir)) && fs.existsSync(oldDir)) fs.renameSync(oldDir, path.dirname(newDir));
+    for (const document of documents) {
+      const nextPath = path.join(path.dirname(newDir), path.basename(document.storage_path));
+      await getPool().execute('UPDATE documents SET archive_folder = ?, storage_path = ?, updated_at = ?, version_no = version_no + 1 WHERE id = ?', [newFolder, nextPath, now(), document.id]);
+    }
+    res.json({ ok: true, archiveCategory: category, archiveDate: date, archiveFolder: newFolder, fileCount: documents.length });
+  }));
+
+  app.delete('/api/documents/:id', authenticate, asyncRoute(async (req, res) => {
+    const [[document]] = await getPool().execute('SELECT id, storage_path, created_by FROM documents WHERE id = ? AND status = \'active\'', [req.params.id]);
+    if (!document) return res.status(404).json({ message: '资料不存在' });
+    if (document.created_by !== req.user.id && !['admin', 'manager', 'purchaser'].includes(req.user.role)) return res.status(403).json({ message: '无权删除此资料' });
+    await getPool().execute('UPDATE documents SET status = \'deleted\', deleted_at = ?, updated_at = ? WHERE id = ?', [now(), now(), req.params.id]);
+    res.json({ ok: true });
+  }));
+
   app.get('/api/tasks/:id/comments', authenticate, asyncRoute(async (req, res) => {
     const [rows] = await getPool().execute(
       `SELECT c.id, c.content, c.created_at AS createdAt, u.display_name AS userName
@@ -947,7 +1652,7 @@ function createApp() {
     res.status(201).json({ id, content, userName: req.user.displayName, createdAt: now().toISOString() });
   }));
 
-  app.get('/api/db/tables', authenticate, asyncRoute(async (req, res) => {
+  app.get('/api/db/tables', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const [tables] = await getPool().query(
       `SELECT TABLE_NAME AS name, TABLE_ROWS AS rowCount
        FROM information_schema.TABLES
@@ -956,7 +1661,7 @@ function createApp() {
     );
     res.json(tables.map(t => ({ name: t.name, rowCount: Number(t.rowCount || 0) })));
   }));
-  app.get('/api/db/table/:name', authenticate, asyncRoute(async (req, res) => {
+  app.get('/api/db/table/:name', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const page = parseInt(req.query.page) || 0;
     const pageSize = Math.min(parseInt(req.query.pageSize) || 100, 1000);
     const [columns] = await getPool().query(
@@ -972,7 +1677,7 @@ function createApp() {
     );
     res.json({ columns: colNames, rows, total: Number(count) });
   }));
-  app.post('/api/db/query', authenticate, asyncRoute(async (req, res) => {
+  app.post('/api/db/query', authenticate, requireRole('admin', 'manager'), asyncRoute(async (req, res) => {
     const sql = (req.body.query || '').trim();
     if (!/^\s*SELECT/i.test(sql)) return res.status(400).json({ message: '仅支持 SELECT 查询' });
     const [rows] = await getPool().query(sql);

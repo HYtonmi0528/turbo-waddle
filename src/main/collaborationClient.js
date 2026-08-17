@@ -2,10 +2,11 @@ const Store = require('electron-store');
 const fs = require('fs');
 const path = require('path');
 const { safeStorage } = require('electron');
+const DEFAULT_SERVER_URL = 'http://101.37.17.111:3210';
 
 class CollaborationClient {
   constructor() {
-    this.store = new Store({ name: 'collaboration-session' });
+    this.store = new Store({ name: 'collaboration-session', defaults: { serverUrl: DEFAULT_SERVER_URL } });
   }
 
   encrypt(text) {
@@ -31,16 +32,18 @@ class CollaborationClient {
     return url;
   }
 
-  getState() {
-    return {
-      serverUrl: this.store.get('serverUrl', ''),
+  async getState() {
+    const state = {
+      serverUrl: this.store.get('serverUrl', DEFAULT_SERVER_URL),
       user: this.store.get('user', null),
       hasSession: Boolean(this.store.get('token'))
     };
+    try { state.setup = await this.request('/api/setup/status', { auth: false, timeout: 8000 }); } catch (_) { state.setup = null; }
+    return state;
   }
 
   async request(apiPath, options = {}) {
-    const baseUrl = this.store.get('serverUrl', '');
+    const baseUrl = this.store.get('serverUrl', DEFAULT_SERVER_URL) || DEFAULT_SERVER_URL;
     if (!baseUrl) throw new Error('请先配置服务器地址');
     const headers = { ...(options.headers || {}) };
     if (options.auth !== false) {
@@ -104,6 +107,10 @@ class CollaborationClient {
     return this.request('/api/auth/register', { method: 'POST', body: payload, auth: false });
   }
 
+  async registerRole(payload) {
+    return this.request('/api/auth/register/role', { method: 'POST', body: payload, auth: false });
+  }
+
   async login(payload) {
     const result = await this.request('/api/auth/login', { method: 'POST', body: payload, auth: false });
     this.store.set('token', result.token);
@@ -162,6 +169,66 @@ class CollaborationClient {
       form.append(key, Array.isArray(value) ? JSON.stringify(value) : String(value));
     }
     return this.request('/api/tasks/import', { method: 'POST', body: form, timeout: 120000 });
+  }
+
+  listExternalSubmissions() {
+    return this.request('/api/external/rfqs');
+  }
+
+  async uploadExternalRfq(filePath, metadata = {}) {
+    const buffer = fs.readFileSync(filePath);
+    const form = new FormData();
+    form.append('file', new Blob([buffer]), path.basename(filePath));
+    Object.entries(metadata).forEach(([key, value]) => { if (value != null && value !== '') form.append(key, String(value)); });
+    return this.request('/api/external/rfqs/submit', { method: 'POST', body: form, timeout: 120000 });
+  }
+
+  acceptExternalSubmission(id, payload = {}) {
+    return this.request(`/api/external/rfqs/${encodeURIComponent(id)}/accept`, {
+      method: 'POST', body: payload
+    });
+  }
+
+  rejectExternalSubmission(id, reason = '') {
+    return this.request(`/api/external/rfqs/${encodeURIComponent(id)}/reject`, {
+      method: 'POST', body: { reason }
+    });
+  }
+
+  listDocuments(params = {}) {
+    const query = new URLSearchParams(Object.entries(params).filter(([, value]) => value != null && value !== '')).toString();
+    return this.request(`/api/documents${query ? `?${query}` : ''}`);
+  }
+
+  async uploadDocument(filePath, metadata = {}) {
+    const buffer = fs.readFileSync(filePath);
+    const form = new FormData();
+    form.append('file', new Blob([buffer]), path.basename(filePath));
+    Object.entries(metadata).forEach(([key, value]) => { if (value != null && value !== '') form.append(key, String(value)); });
+    return this.request('/api/documents', { method: 'POST', body: form, timeout: 120000 });
+  }
+
+  deleteDocument(id) {
+    return this.request(`/api/documents/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  }
+
+  renameDocument(id, payload = {}) {
+    return this.request(`/api/documents/${encodeURIComponent(id)}`, { method: 'PATCH', body: payload });
+  }
+
+  listDocumentFolders() {
+    return this.request('/api/document-folders');
+  }
+
+  renameDocumentFolder(payload = {}) {
+    return this.request('/api/document-folders', { method: 'PATCH', body: payload });
+  }
+
+  async previewDocument(document) {
+    const extension = path.extname(document.originalName || '').toLowerCase() || '.bin';
+    const filePath = path.join(require('os').tmpdir(), `latic-preview-${document.id}${extension}`);
+    await this.downloadFile(`/api/documents/${encodeURIComponent(document.id)}/preview`, filePath);
+    return { success: true, filePath };
   }
 
   async uploadTaskAttachment(taskId, itemId, filePath) {
